@@ -20,6 +20,7 @@ from .base import (
     RateLimitError,
     TimeoutError,
 )
+from .mock import MockProvider
 
 __all__ = [
     "BaseProvider",
@@ -30,4 +31,5 @@ __all__ = [
     "RateLimitError",
     "TimeoutError",
     "InvalidRequestError",
+    "MockProvider",
 ]
