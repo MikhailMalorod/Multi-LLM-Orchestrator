@@ -1,5 +1,8 @@
 # Multi-LLM Orchestrator
 
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 A unified interface for orchestrating multiple Large Language Model providers with intelligent routing and fallback mechanisms.
 
 ## Overview
@@ -46,8 +49,8 @@ This example demonstrates the core functionality: creating a router, adding mult
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/multi-llm-orchestrator.git
-cd multi-llm-orchestrator
+git clone https://github.com/MikhailMalorod/Multi-LLM-Orchestrator.git
+cd Multi-LLM-Orchestrator
 
 # Install dependencies
 poetry install
@@ -57,8 +60,8 @@ poetry install
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/multi-llm-orchestrator.git
-cd multi-llm-orchestrator
+git clone https://github.com/MikhailMalorod/Multi-LLM-Orchestrator.git
+cd Multi-LLM-Orchestrator
 
 # Install in development mode
 pip install -e .
