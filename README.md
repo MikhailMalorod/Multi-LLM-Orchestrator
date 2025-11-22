@@ -4,68 +4,172 @@ A unified interface for orchestrating multiple Large Language Model providers wi
 
 ## Overview
 
-*(placeholder)*
+The Multi-LLM Orchestrator provides a seamless way to integrate and manage multiple LLM providers through a single, consistent interface. It supports intelligent routing strategies, automatic fallbacks, and provider-specific optimizations. Currently focused on Russian LLM providers (GigaChat, YandexGPT) with a flexible architecture that supports any LLM provider implementation.
 
-The Multi-LLM Orchestrator provides a seamless way to integrate and manage multiple LLM providers through a single, consistent interface. It supports intelligent routing, automatic fallbacks, and provider-specific optimizations.
+## Quickstart
 
-## Features
+Get started with Multi-LLM Orchestrator in minutes using the MockProvider for testing:
 
-*(placeholder)*
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, MockProvider
 
-- **Multi-Provider Support**: Integrate with GigaChat, YandexGPT, and other LLM providers
-- **Intelligent Routing**: Automatically route requests to the most suitable provider
-- **Fallback Mechanisms**: Automatic failover to backup providers
-- **Configuration Management**: Flexible configuration via environment variables or files
-- **Type Safety**: Built with Pydantic for robust data validation
-- **Modern Python**: Uses async/await patterns for optimal performance
+async def main():
+    # Initialize router with round-robin strategy
+    router = Router(strategy="round-robin")
+    
+    # Add providers
+    for i in range(3):
+        config = ProviderConfig(name=f"provider-{i+1}", model="mock-normal")
+        router.add_provider(MockProvider(config))
+    
+    # Make a request
+    response = await router.route("What is Python?")
+    print(response)
+    # Output: Mock response to: What is Python?
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+This example demonstrates the core functionality: creating a router, adding multiple providers, and routing requests. The MockProvider simulates LLM behavior without requiring API credentials.
 
 ## Installation
 
-*(placeholder)*
+**Requirements:**
+
+- Python 3.11+
+- Poetry (recommended) or pip
+
+### Using Poetry
 
 ```bash
 # Clone the repository
 git clone https://github.com/your-username/multi-llm-orchestrator.git
 cd multi-llm-orchestrator
 
-# Install dependencies using Poetry
+# Install dependencies
 poetry install
+```
 
-# Or using pip
+### Using pip
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/multi-llm-orchestrator.git
+cd multi-llm-orchestrator
+
+# Install in development mode
 pip install -e .
 ```
 
-## Quick Start
+## Architecture
 
-*(placeholder)*
+The Multi-LLM Orchestrator follows a modular architecture with clear separation of concerns:
+
+```
+┌──────────────────────────────────────────────┐
+│              User Application                │
+└─────────────────┬────────────────────────────┘
+                  │
+                  ▼
+         ┌────────────────┐
+         │     Router      │ ◄── Strategy: round-robin/random/first-available
+         └────────┬───────┘
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│Provider 1│ │Provider 2│ │Provider 3│
+│(Base)    │ │(Base)    │ │(Base)    │
+└────┬─────┘ └────┬─────┘ └────┬─────┘
+     │            │            │
+     ▼            ▼            ▼
+   (API)        (API)        (API)
+```
+
+### Components
+
+- **Router** (`src/orchestrator/router.py`): Manages provider selection based on routing strategy and handles automatic fallback when providers fail.
+
+- **BaseProvider** (`src/orchestrator/providers/base.py`): Abstract base class defining the interface that all provider implementations must follow. Includes configuration models (`ProviderConfig`, `GenerationParams`) and exception hierarchy.
+
+- **MockProvider** (`src/orchestrator/providers/mock.py`): Test implementation that simulates LLM behavior without making actual API calls. Supports various simulation modes for testing different scenarios.
+
+- **Config** (`src/orchestrator/config.py`): Future component for loading configuration from environment variables. Currently used for planned real provider integrations (GigaChat, YandexGPT).
+
+## Routing Strategies
+
+The Router supports three routing strategies, each suitable for different use cases:
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| **round-robin** | Cycles through providers in a fixed order | Equal load distribution (recommended for production) |
+| **random** | Selects a random provider from available providers | Simple random selection for load balancing |
+| **first-available** | Selects the first healthy provider based on health checks | High availability scenarios with automatic unhealthy provider skipping |
+
+The strategy is selected when initializing the Router:
 
 ```python
-from orchestrator import LLMOrchestrator
-
-# Initialize the orchestrator
-orchestrator = LLMOrchestrator()
-
-# Make a request
-response = await orchestrator.chat("Hello, world!")
-print(response)
+router = Router(strategy="round-robin")  # or "random" or "first-available"
 ```
+
+## Run the Demo
+
+See the routing strategies and fallback mechanisms in action:
+
+```bash
+python examples/routing_demo.py
+```
+
+**No API keys required** — uses MockProvider for demonstration.
+
+The demo showcases:
+- All three routing strategies (round-robin, random, first-available)
+- Automatic fallback mechanism when providers fail
+- Error handling when all providers are unavailable
+
+See [routing_demo.py](examples/routing_demo.py) for the complete interactive demonstration.
+
+## MockProvider Modes
+
+MockProvider simulates various LLM behaviors for testing without requiring API credentials:
+
+- **`mock-normal`** — Returns successful responses with a small delay
+- **`mock-timeout`** — Simulates timeout errors
+- **`mock-unhealthy`** — Health check returns `False` (useful for testing `first-available` strategy)
+- **`mock-ratelimit`** — Simulates rate limit errors
+- **`mock-auth-error`** — Simulates authentication failures
+
+See [mock.py](src/orchestrator/providers/mock.py) for all available modes and detailed documentation.
 
 ## Roadmap
 
-*(placeholder)*
+See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
 
-- [ ] Initial core architecture
-- [ ] GigaChat provider implementation
-- [ ] YandexGPT provider implementation
-- [ ] Intelligent routing algorithm
-- [ ] Configuration management system
-- [ ] Comprehensive testing suite
-- [ ] Documentation and examples
-- [ ] Performance benchmarking
+### Current Status
+
+- ✅ Core architecture with Router and BaseProvider
+- ✅ MockProvider for testing
+- ✅ Three routing strategies (round-robin, random, first-available)
+- ✅ Automatic fallback mechanism
+- ✅ Example demonstrations
+
+### Planned Providers
+
+- [ ] GigaChat (Week 3)
+- [ ] YandexGPT (Week 3)
+- [ ] Ollama (local models)
+
+Currently supports **MockProvider** for testing and development.
+
+## Documentation
+
+- **[STRATEGY.md](STRATEGY.md)** — Project roadmap and development plan
+- **[routing_demo.py](examples/routing_demo.py)** — Interactive demonstration of routing strategies and fallback mechanisms
 
 ## Contributing
-
-*(placeholder)*
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
 
