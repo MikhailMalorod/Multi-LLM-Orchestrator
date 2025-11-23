@@ -22,6 +22,7 @@ from .base import (
 )
 from .gigachat import GigaChatProvider
 from .mock import MockProvider
+from .yandexgpt import YandexGPTProvider
 
 __all__ = [
     "BaseProvider",
@@ -34,4 +35,5 @@ __all__ = [
     "InvalidRequestError",
     "GigaChatProvider",
     "MockProvider",
+    "YandexGPTProvider",
 ]

@@ -70,7 +70,36 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-The MockProvider simulates LLM behavior without requiring API credentials, while GigaChatProvider provides full integration with GigaChat (Sber) API.
+### Using YandexGPTProvider (Production)
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, YandexGPTProvider
+
+async def main():
+    # Create YandexGPT provider
+    config = ProviderConfig(
+        name="yandexgpt",
+        api_key="your_iam_token_here",  # IAM token (valid for 12 hours)
+        folder_id="your_folder_id_here",  # Yandex Cloud folder ID
+        model="yandexgpt/latest"  # or "yandexgpt-lite/latest"
+    )
+    provider = YandexGPTProvider(config)
+    
+    # Use with router
+    router = Router(strategy="round-robin")
+    router.add_provider(provider)
+    
+    # Generate response
+    response = await router.route("What is Python?")
+    print(response)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+The MockProvider simulates LLM behavior without requiring API credentials, while GigaChatProvider and YandexGPTProvider provide full integration with their respective APIs.
 
 ## Installation
 
@@ -201,10 +230,14 @@ See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
   - OAuth2 authentication with automatic token refresh
   - Support for all generation parameters
   - Comprehensive error handling
+- ✅ **YandexGPTProvider** — Full integration with YandexGPT (Yandex Cloud) API
+  - IAM token authentication (user-managed, 12-hour validity)
+  - Support for temperature and maxTokens parameters
+  - Support for yandexgpt/latest and yandexgpt-lite/latest models
+  - Comprehensive error handling
 
 ### Planned Providers
 
-- [ ] YandexGPT
 - [ ] Ollama (local models)
 
 ## Documentation

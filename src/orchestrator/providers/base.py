@@ -32,9 +32,11 @@ class ProviderConfig(BaseModel):
         max_retries: Maximum number of retry attempts for failed requests (0-10)
         model: Specific model name or version to use (optional, provider-specific)
         scope: OAuth2 scope for providers that require it (optional, provider-specific)
+        folder_id: Yandex Cloud folder ID (required for YandexGPT, optional for other providers)
 
     Example:
         ```python
+        # GigaChat configuration
         config = ProviderConfig(
             name="gigachat-prod",
             api_key="your_api_key_here",
@@ -42,6 +44,14 @@ class ProviderConfig(BaseModel):
             timeout=60,
             max_retries=3,
             model="GigaChat-2-Pro"
+        )
+        
+        # YandexGPT configuration
+        config = ProviderConfig(
+            name="yandexgpt",
+            api_key="your_iam_token",
+            folder_id="your_folder_id",
+            model="yandexgpt/latest"
         )
         ```
     """
@@ -77,6 +87,10 @@ class ProviderConfig(BaseModel):
     scope: str | None = Field(
         None,
         description="OAuth2 scope for providers that require it (e.g., 'GIGACHAT_API_PERS', 'GIGACHAT_API_CORP')"
+    )
+    folder_id: str | None = Field(
+        None,
+        description="Yandex Cloud folder ID (required for YandexGPT)"
     )
 
 
