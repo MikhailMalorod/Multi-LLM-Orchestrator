@@ -1,9 +1,32 @@
 [tool.poetry]
 name = "multi-llm-orchestrator"
 version = "0.1.0"
-description = "A unified interface for orchestrating multiple LLM providers"
-authors = ["Your Name <your.email@example.com>"]
+description = "Unified interface for Russian LLMs with intelligent routing and fallback"
+authors = ["Mikhail Malorod <MikhailMalorod@users.noreply.github.com>"]
 readme = "README.md"
+license = "MIT"
+repository = "https://github.com/MikhailMalorod/Multi-LLM-Orchestrator"
+homepage = "https://github.com/MikhailMalorod/Multi-LLM-Orchestrator"
+keywords = [
+    "llm",
+    "ai",
+    "gigachat",
+    "yandexgpt",
+    "router",
+    "orchestrator",
+    "russian-ai",
+    "fallback",
+    "multi-provider"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 packages = [{include = "orchestrator", from = "src"}]
 
 [tool.poetry.dependencies]
@@ -30,6 +53,8 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
