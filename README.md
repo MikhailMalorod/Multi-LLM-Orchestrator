@@ -2,6 +2,9 @@
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
+![PyPI](https://img.shields.io/pypi/v/multi-llm-orchestrator.svg)
+![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-56%20passed-success.svg)
 
 A unified interface for orchestrating multiple Large Language Model providers with intelligent routing and fallback mechanisms.
 
