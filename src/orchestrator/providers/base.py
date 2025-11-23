@@ -8,10 +8,10 @@ exception hierarchy, and the abstract base class that all providers must impleme
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ============================================================================
 # CONFIGURATION MODELS
@@ -20,10 +20,10 @@ from pydantic import BaseModel, Field
 
 class ProviderConfig(BaseModel):
     """Configuration for an LLM provider.
-    
+
     This model defines all necessary configuration parameters for initializing
     and managing a connection to an LLM provider service.
-    
+
     Attributes:
         name: Unique identifier for the provider instance
         api_key: Authentication key for the provider API (optional for local providers)
@@ -32,7 +32,7 @@ class ProviderConfig(BaseModel):
         max_retries: Maximum number of retry attempts for failed requests (0-10)
         model: Specific model name or version to use (optional, provider-specific)
         scope: OAuth2 scope for providers that require it (optional, provider-specific)
-    
+
     Example:
         ```python
         config = ProviderConfig(
@@ -45,16 +45,16 @@ class ProviderConfig(BaseModel):
         )
         ```
     """
-    
+
     name: str = Field(
         ...,
         description="Provider identifier (e.g., 'gigachat', 'yandexgpt')"
     )
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         None,
         description="API authentication key"
     )
-    base_url: Optional[str] = Field(
+    base_url: str | None = Field(
         None,
         description="Base URL for API endpoints"
     )
@@ -70,11 +70,11 @@ class ProviderConfig(BaseModel):
         le=10,
         description="Maximum retry attempts for failed requests"
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         None,
         description="Model name or version (e.g., 'GigaChat-2-Pro', 'yandexgpt-lite')"
     )
-    scope: Optional[str] = Field(
+    scope: str | None = Field(
         None,
         description="OAuth2 scope for providers that require it (e.g., 'GIGACHAT_API_PERS', 'GIGACHAT_API_CORP')"
     )
@@ -82,16 +82,16 @@ class ProviderConfig(BaseModel):
 
 class GenerationParams(BaseModel):
     """Parameters for controlling text generation behavior.
-    
+
     These parameters allow fine-tuning the output characteristics of LLM
     text generation requests.
-    
+
     Attributes:
         temperature: Controls randomness in generation (0.0 = deterministic, 2.0 = very random)
         max_tokens: Maximum number of tokens to generate in the response
         top_p: Nucleus sampling parameter - considers tokens with cumulative probability up to top_p
         stop: List of sequences that will stop generation when encountered
-    
+
     Example:
         ```python
         params = GenerationParams(
@@ -102,7 +102,7 @@ class GenerationParams(BaseModel):
         )
         ```
     """
-    
+
     temperature: float = Field(
         0.7,
         ge=0.0,
@@ -120,7 +120,7 @@ class GenerationParams(BaseModel):
         le=1.0,
         description="Nucleus sampling probability threshold"
     )
-    stop: Optional[List[str]] = Field(
+    stop: list[str] | None = Field(
         None,
         description="Stop sequences for generation termination"
     )
@@ -133,10 +133,10 @@ class GenerationParams(BaseModel):
 
 class ProviderError(Exception):
     """Base exception for all provider-related errors.
-    
+
     All provider-specific exceptions inherit from this base class,
     allowing for unified error handling across different provider implementations.
-    
+
     Example:
         ```python
         try:
@@ -145,48 +145,48 @@ class ProviderError(Exception):
             logger.error(f"Provider error occurred: {e}")
         ```
     """
-    
+
     pass
 
 
 class AuthenticationError(ProviderError):
     """Raised when authentication with the provider fails.
-    
+
     This typically corresponds to HTTP 401 Unauthorized responses,
     indicating invalid or expired API credentials.
-    
+
     Example:
         ```python
         if response.status_code == 401:
             raise AuthenticationError("Invalid API key")
         ```
     """
-    
+
     pass
 
 
 class RateLimitError(ProviderError):
     """Raised when the provider's rate limit is exceeded.
-    
+
     This corresponds to HTTP 429 Too Many Requests responses.
     The request should be retried after a delay.
-    
+
     Example:
         ```python
         if response.status_code == 429:
             raise RateLimitError("Rate limit exceeded, retry after delay")
         ```
     """
-    
+
     pass
 
 
 class TimeoutError(ProviderError):
     """Raised when a request to the provider times out.
-    
+
     This occurs when the provider doesn't respond within the
     configured timeout period.
-    
+
     Example:
         ```python
         try:
@@ -195,23 +195,23 @@ class TimeoutError(ProviderError):
             raise TimeoutError("Request timed out after 30 seconds")
         ```
     """
-    
+
     pass
 
 
 class InvalidRequestError(ProviderError):
     """Raised when the request to the provider is invalid.
-    
+
     This typically corresponds to HTTP 400 Bad Request responses,
     indicating malformed requests or invalid parameters.
-    
+
     Example:
         ```python
         if response.status_code == 400:
             raise InvalidRequestError("Invalid request parameters")
         ```
     """
-    
+
     pass
 
 
@@ -222,20 +222,20 @@ class InvalidRequestError(ProviderError):
 
 class BaseProvider(ABC):
     """Abstract base class for all LLM providers.
-    
+
     This class defines the interface that all LLM provider implementations
     must follow. It provides concrete implementations for common functionality
     like retry logic and metadata retrieval, while requiring providers to
     implement their own generation and health check logic.
-    
+
     Subclasses must implement:
         - generate(): Text generation from prompts
         - health_check(): Provider availability verification
-    
+
     Attributes:
         config: Provider configuration settings
         logger: Logger instance for this provider
-    
+
     Example:
         ```python
         class MyProvider(BaseProvider):
@@ -243,24 +243,24 @@ class BaseProvider(ABC):
                 # Custom implementation
                 response = await self._make_api_request(prompt, params)
                 return response.text
-            
+
             async def health_check(self) -> bool:
                 try:
                     await self._ping_endpoint()
                     return True
                 except Exception:
                     return False
-        
+
         # Usage
         config = ProviderConfig(name="my-provider", api_key="key123")
         provider = MyProvider(config)
         response = await provider.generate("Hello, world!")
         ```
     """
-    
+
     def __init__(self, config: ProviderConfig) -> None:
         """Initialize the provider with configuration.
-        
+
         Args:
             config: Provider configuration containing API credentials,
                    timeouts, retry settings, and other provider-specific options
@@ -268,57 +268,57 @@ class BaseProvider(ABC):
         self.config = config
         self.logger = logging.getLogger(f"orchestrator.providers.{config.name}")
         self.logger.info(f"Initialized provider: {config.name}")
-    
+
     @abstractmethod
     async def generate(
         self,
         prompt: str,
-        params: Optional[GenerationParams] = None
+        params: GenerationParams | None = None
     ) -> str:
         """Generate text completion from a prompt.
-        
+
         This is the primary method for interacting with an LLM provider.
         It takes a text prompt and optional generation parameters, and
         returns the generated text response.
-        
+
         Args:
             prompt: Input text prompt to generate completion for
             params: Optional generation parameters (temperature, max_tokens, etc.)
                    If None, provider defaults will be used
-        
+
         Returns:
             Generated text response from the LLM
-        
+
         Raises:
             AuthenticationError: If API authentication fails
             RateLimitError: If provider rate limit is exceeded
             TimeoutError: If request times out
             InvalidRequestError: If request parameters are invalid
             ProviderError: For other provider-specific errors
-        
+
         Example:
             ```python
             # Simple generation
             response = await provider.generate("What is Python?")
-            
+
             # With custom parameters
             params = GenerationParams(temperature=0.9, max_tokens=500)
             response = await provider.generate("Write a poem", params=params)
             ```
         """
         pass
-    
+
     @abstractmethod
     async def health_check(self) -> bool:
         """Check if the provider is healthy and available.
-        
+
         This method should verify that the provider's API is accessible
         and responding correctly. The specific implementation depends on
         the provider (e.g., ping endpoint, test request, etc.).
-        
+
         Returns:
             True if provider is healthy and available, False otherwise
-        
+
         Example:
             ```python
             if await provider.health_check():
@@ -328,19 +328,19 @@ class BaseProvider(ABC):
             ```
         """
         pass
-    
-    def get_model_info(self) -> Dict[str, Any]:
+
+    def get_model_info(self) -> dict[str, Any]:
         """Get provider and model metadata.
-        
+
         Returns a dictionary containing information about the provider
         instance, including its name, configured model, and type.
-        
+
         Returns:
             Dictionary with provider metadata:
                 - name: Provider instance name
                 - model: Configured model name (if any)
                 - provider_type: Python class name of the provider
-        
+
         Example:
             ```python
             info = provider.get_model_info()
@@ -352,34 +352,34 @@ class BaseProvider(ABC):
             "model": self.config.model,
             "provider_type": self.__class__.__name__
         }
-    
+
     async def _retry_with_backoff(
         self,
         func: Callable[[], Any],
-        max_retries: Optional[int] = None
+        max_retries: int | None = None
     ) -> Any:
         """Retry an async function with exponential backoff.
-        
+
         This method implements a retry mechanism with exponential backoff
         for handling transient failures like rate limits and timeouts.
         The wait time between retries increases exponentially: 1s, 2s, 4s, 8s, etc.,
         capped at 30 seconds.
-        
+
         Only RateLimitError and TimeoutError are retried automatically.
         Other exceptions are raised immediately.
-        
+
         Args:
             func: Async callable to retry (must be a no-argument function)
             max_retries: Maximum number of retry attempts. If None, uses
                         the value from provider config (default: 3)
-        
+
         Returns:
             The return value from a successful function call
-        
+
         Raises:
             RateLimitError: If all retry attempts are exhausted due to rate limiting
             TimeoutError: If all retry attempts are exhausted due to timeouts
-        
+
         Example:
             ```python
             async def make_request():
@@ -387,13 +387,13 @@ class BaseProvider(ABC):
                 if response.status_code == 429:
                     raise RateLimitError("Rate limited")
                 return response.json()
-            
+
             # Will retry up to 3 times with exponential backoff
             result = await self._retry_with_backoff(make_request)
             ```
         """
         max_retries = max_retries or self.config.max_retries
-        
+
         for attempt in range(max_retries):
             try:
                 return await func()
@@ -404,7 +404,7 @@ class BaseProvider(ABC):
                         f"Max retries ({max_retries}) reached for {self.config.name}: {e}"
                     )
                     raise
-                
+
                 # Calculate exponential backoff with cap at 30 seconds
                 wait_time = min(2 ** attempt, 30)
                 self.logger.warning(

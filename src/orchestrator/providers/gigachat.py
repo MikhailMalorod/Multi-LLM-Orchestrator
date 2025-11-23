@@ -38,10 +38,9 @@ Example:
 """
 
 import asyncio
-import logging
 import time
 import uuid
-from typing import Optional
+from typing import Any, cast
 
 import httpx
 
@@ -142,8 +141,8 @@ class GigaChatProvider(BaseProvider):
             raise ValueError("api_key is required for GigaChatProvider")
 
         # Token management state
-        self._access_token: Optional[str] = None
-        self._token_expires_at: Optional[float] = None  # timestamp in seconds
+        self._access_token: str | None = None
+        self._token_expires_at: float | None = None  # timestamp in seconds
         self._token_lock = asyncio.Lock()
 
         # HTTP client with configured timeout
@@ -231,20 +230,20 @@ class GigaChatProvider(BaseProvider):
                 return self._access_token
 
             except httpx.TimeoutException:
-                raise TimeoutError("OAuth2 token request timed out")
+                raise TimeoutError("OAuth2 token request timed out") from None
             except httpx.ConnectError as e:
-                raise ProviderError(f"OAuth2 connection error: {e}")
+                raise ProviderError(f"OAuth2 connection error: {e}") from e
             except httpx.NetworkError as e:
-                raise ProviderError(f"OAuth2 network error: {e}")
+                raise ProviderError(f"OAuth2 network error: {e}") from e
             except AuthenticationError:
                 # Re-raise authentication errors
                 raise
             except Exception as e:
                 # Catch any other errors
-                raise ProviderError(f"OAuth2 token request failed: {e}")
+                raise ProviderError(f"OAuth2 token request failed: {e}") from e
 
     async def generate(
-        self, prompt: str, params: Optional[GenerationParams] = None
+        self, prompt: str, params: GenerationParams | None = None
     ) -> str:
         """Generate text completion from a prompt using GigaChat API.
 
@@ -304,7 +303,7 @@ class GigaChatProvider(BaseProvider):
         }
 
         # Prepare request payload
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.config.model or self.DEFAULT_MODEL,
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -352,8 +351,8 @@ class GigaChatProvider(BaseProvider):
                 self._handle_error(response)
 
             # Parse successful response
-            data = response.json()
-            response_text = data["choices"][0]["message"]["content"]
+            data: dict[str, Any] = cast(dict[str, Any], response.json())
+            response_text: str = cast(str, data["choices"][0]["message"]["content"])
 
             self.logger.debug(f"Received response: {len(response_text)} characters")
             return response_text
@@ -361,19 +360,19 @@ class GigaChatProvider(BaseProvider):
         except httpx.TimeoutException:
             raise TimeoutError(
                 f"Request to GigaChat API timed out after {self.config.timeout}s"
-            )
+            ) from None
         except httpx.ConnectError as e:
-            raise ProviderError(f"Connection error to GigaChat API: {e}")
+            raise ProviderError(f"Connection error to GigaChat API: {e}") from e
         except httpx.NetworkError as e:
-            raise ProviderError(f"Network error to GigaChat API: {e}")
+            raise ProviderError(f"Network error to GigaChat API: {e}") from e
         except (KeyError, IndexError) as e:
-            raise ProviderError(f"Invalid response format from GigaChat API: {e}")
+            raise ProviderError(f"Invalid response format from GigaChat API: {e}") from e
         except ProviderError:
             # Re-raise provider errors (AuthenticationError, RateLimitError, etc.)
             raise
         except Exception as e:
             # Catch any other unexpected errors
-            raise ProviderError(f"Unexpected error during generation: {e}")
+            raise ProviderError(f"Unexpected error during generation: {e}") from e
 
     async def health_check(self) -> bool:
         """Check if the provider is healthy and available.
