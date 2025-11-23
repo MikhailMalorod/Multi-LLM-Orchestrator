@@ -11,7 +11,9 @@ The Multi-LLM Orchestrator provides a seamless way to integrate and manage multi
 
 ## Quickstart
 
-Get started with Multi-LLM Orchestrator in minutes using the MockProvider for testing:
+Get started with Multi-LLM Orchestrator in minutes:
+
+### Using MockProvider (Testing)
 
 ```python
 import asyncio
@@ -36,7 +38,36 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-This example demonstrates the core functionality: creating a router, adding multiple providers, and routing requests. The MockProvider simulates LLM behavior without requiring API credentials.
+### Using GigaChatProvider (Production)
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, GigaChatProvider
+
+async def main():
+    # Create GigaChat provider
+    config = ProviderConfig(
+        name="gigachat",
+        api_key="your_authorization_key_here",  # OAuth2 authorization key
+        model="GigaChat",  # or "GigaChat-Pro", "GigaChat-Plus"
+        scope="GIGACHAT_API_PERS"  # or "GIGACHAT_API_CORP" for corporate
+    )
+    provider = GigaChatProvider(config)
+    
+    # Use with router
+    router = Router(strategy="round-robin")
+    router.add_provider(provider)
+    
+    # Generate response
+    response = await router.route("What is Python?")
+    print(response)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+The MockProvider simulates LLM behavior without requiring API credentials, while GigaChatProvider provides full integration with GigaChat (Sber) API.
 
 ## Installation
 
@@ -155,17 +186,23 @@ See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
 
 - ✅ Core architecture with Router and BaseProvider
 - ✅ MockProvider for testing
+- ✅ GigaChatProvider with OAuth2 authentication
 - ✅ Three routing strategies (round-robin, random, first-available)
 - ✅ Automatic fallback mechanism
 - ✅ Example demonstrations
 
+### Supported Providers
+
+- ✅ **MockProvider** — For testing and development
+- ✅ **GigaChatProvider** — Full integration with GigaChat (Sber) API
+  - OAuth2 authentication with automatic token refresh
+  - Support for all generation parameters
+  - Comprehensive error handling
+
 ### Planned Providers
 
-- [ ] GigaChat (Week 3)
-- [ ] YandexGPT (Week 3)
+- [ ] YandexGPT
 - [ ] Ollama (local models)
-
-Currently supports **MockProvider** for testing and development.
 
 ## Documentation
 

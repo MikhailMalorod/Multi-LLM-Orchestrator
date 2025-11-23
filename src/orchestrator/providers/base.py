@@ -31,6 +31,7 @@ class ProviderConfig(BaseModel):
         timeout: Maximum time in seconds to wait for API responses (1-300 seconds)
         max_retries: Maximum number of retry attempts for failed requests (0-10)
         model: Specific model name or version to use (optional, provider-specific)
+        scope: OAuth2 scope for providers that require it (optional, provider-specific)
     
     Example:
         ```python
@@ -72,6 +73,10 @@ class ProviderConfig(BaseModel):
     model: Optional[str] = Field(
         None,
         description="Model name or version (e.g., 'GigaChat-2-Pro', 'yandexgpt-lite')"
+    )
+    scope: Optional[str] = Field(
+        None,
+        description="OAuth2 scope for providers that require it (e.g., 'GIGACHAT_API_PERS', 'GIGACHAT_API_CORP')"
     )
 
 

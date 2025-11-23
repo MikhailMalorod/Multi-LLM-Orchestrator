@@ -20,6 +20,7 @@ from .base import (
     RateLimitError,
     TimeoutError,
 )
+from .gigachat import GigaChatProvider
 from .mock import MockProvider
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "RateLimitError",
     "TimeoutError",
     "InvalidRequestError",
+    "GigaChatProvider",
     "MockProvider",
 ]
