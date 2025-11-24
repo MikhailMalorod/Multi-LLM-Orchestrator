@@ -273,6 +273,12 @@ See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
 
 ## Documentation
 
+- **[Architecture Overview](docs/architecture.md)** — System design and components
+- **[Contributing Guide](CONTRIBUTING.md)** — How to contribute to the project
+- **[Provider Documentation](docs/providers/)** — Detailed provider guides
+  - [GigaChat Provider](docs/providers/gigachat.md)
+  - [YandexGPT Provider](docs/providers/yandexgpt.md)
+  - [Creating Custom Provider](docs/providers/custom_provider.md)
 - **[STRATEGY.md](STRATEGY.md)** — Project roadmap and development plan
 - **[routing_demo.py](examples/routing_demo.py)** — Interactive demonstration of routing strategies and fallback mechanisms
 

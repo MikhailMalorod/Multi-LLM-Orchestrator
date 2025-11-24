@@ -177,3 +177,8 @@ desktop.ini
 # Environment files
 .env*
 !.env.example
+
+# Temporary planning and question files
+plan*.md
+*_QUESTIONS.md
+NEXT_STEPS.md
