@@ -133,8 +133,18 @@ class YandexGPTProvider(BaseProvider):
         if not config.folder_id:
             raise ValueError("folder_id is required for YandexGPTProvider")
 
-        # HTTP client with configured timeout
-        self._client = httpx.AsyncClient(timeout=config.timeout)
+        # HTTP client with configured timeout and SSL verification
+        self._client = httpx.AsyncClient(
+            timeout=config.timeout,
+            verify=config.verify_ssl
+        )
+
+        # Log security warning if SSL verification is disabled
+        if not config.verify_ssl:
+            self.logger.warning(
+                f"SSL certificate verification is DISABLED for provider '{config.name}'. "
+                "This is insecure and should only be used in development."
+            )
 
         self.logger.info(
             f"YandexGPTProvider initialized: model={config.model or self.DEFAULT_MODEL}, "

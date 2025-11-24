@@ -30,6 +30,9 @@ class ProviderConfig(BaseModel):
         base_url: Base URL for the provider's API endpoints (optional if provider has default)
         timeout: Maximum time in seconds to wait for API responses (1-300 seconds)
         max_retries: Maximum number of retry attempts for failed requests (0-10)
+        verify_ssl: Enable SSL certificate verification (default: True).
+            Set to False for providers with self-signed certificates.
+            WARNING: Insecure, use only in development.
         model: Specific model name or version to use (optional, provider-specific)
         scope: OAuth2 scope for providers that require it (optional, provider-specific)
         folder_id: Yandex Cloud folder ID (required for YandexGPT, optional for other providers)
@@ -45,7 +48,7 @@ class ProviderConfig(BaseModel):
             max_retries=3,
             model="GigaChat-2-Pro"
         )
-        
+
         # YandexGPT configuration
         config = ProviderConfig(
             name="yandexgpt",
@@ -79,6 +82,15 @@ class ProviderConfig(BaseModel):
         ge=0,
         le=10,
         description="Maximum retry attempts for failed requests"
+    )
+    verify_ssl: bool = Field(
+        True,
+        description=(
+            "Enable SSL certificate verification. "
+            "Set to False to disable verification for providers with self-signed certificates "
+            "(e.g., GigaChat with Russian CA). "
+            "WARNING: Disabling SSL verification is insecure."
+        )
     )
     model: str | None = Field(
         None,

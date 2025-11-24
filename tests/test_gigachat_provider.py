@@ -523,3 +523,25 @@ class TestGigaChatProviderConfig:
         assert provider.config.scope is None
         assert provider.DEFAULT_SCOPE == "GIGACHAT_API_PERS"
 
+    def test_gigachat_provider_with_verify_ssl_true(self) -> None:
+        """Test GigaChatProvider with SSL verification enabled (default)."""
+        config = ProviderConfig(
+            name="test",
+            api_key="test_key",
+            scope="GIGACHAT_API_PERS",
+            verify_ssl=True  # Explicit True
+        )
+        provider = GigaChatProvider(config)
+        assert provider.config.verify_ssl is True
+
+    def test_gigachat_provider_with_verify_ssl_false(self) -> None:
+        """Test GigaChatProvider with SSL verification disabled."""
+        config = ProviderConfig(
+            name="test",
+            api_key="test_key",
+            scope="GIGACHAT_API_PERS",
+            verify_ssl=False
+        )
+        provider = GigaChatProvider(config)
+        assert provider.config.verify_ssl is False
+

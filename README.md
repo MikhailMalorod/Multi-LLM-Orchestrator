@@ -70,6 +70,37 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Disabling SSL Verification (for self-signed certificates)
+
+If you encounter SSL certificate errors with GigaChat (Russian CA certificates), you can disable verification:
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import GigaChatProvider, ProviderConfig
+
+async def main():
+    router = Router(strategy="round-robin")
+    
+    # WARNING: Disabling SSL verification is insecure
+    # Use only in development or with trusted networks
+    config = ProviderConfig(
+        name="gigachat",
+        api_key="your_authorization_key_here",
+        scope="GIGACHAT_API_PERS",
+        verify_ssl=False  # Disable SSL verification
+    )
+    
+    router.add_provider(GigaChatProvider(config))
+    
+    response = await router.route("Hello!")
+    print(response)
+
+asyncio.run(main())
+```
+
+**⚠️ Security Warning:** Disabling SSL verification makes your application vulnerable to man-in-the-middle attacks. Use this option only in development or when working with known self-signed certificates.
+
 ### Using YandexGPTProvider (Production)
 
 ```python
@@ -141,7 +172,7 @@ The Multi-LLM Orchestrator follows a modular architecture with clear separation 
                   │
                   ▼
          ┌────────────────┐
-         │     Router      │ ◄── Strategy: round-robin/random/first-available
+         │     Router     │ ◄── Strategy: round-robin/random/first-available
          └────────┬───────┘
                   │
       ┌───────────┼───────────┐

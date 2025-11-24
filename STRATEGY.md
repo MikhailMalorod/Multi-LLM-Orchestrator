@@ -6,6 +6,15 @@ Structure the document with the following sections:
 
 # Multi-LLM Orchestrator: Strategy & Roadmap
 
+## Recent Updates
+
+### v0.2.1 (November 24, 2025)
+- ✅ Added `verify_ssl` parameter to ProviderConfig
+- ✅ Fixed SSL certificate verification issues with GigaChat (Russian CA)
+- ✅ Added security warnings for disabled SSL verification
+- ✅ Updated documentation with examples
+- ✅ Removed manual SSL verification hacks from codebase
+
 ## 1. Vision & Mission
 - Vision: What we're building and why it matters
 - Mission: Our approach to achieving the vision

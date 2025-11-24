@@ -81,6 +81,7 @@ class TestProviderConfigValidation:
         Verifies that ProviderConfig uses correct default values:
         - timeout: 30
         - max_retries: 3
+        - verify_ssl: True
         - api_key: None
         - base_url: None
         - model: None
@@ -89,6 +90,7 @@ class TestProviderConfigValidation:
         
         assert config.timeout == 30
         assert config.max_retries == 3
+        assert config.verify_ssl is True
         assert config.api_key is None
         assert config.base_url is None
         assert config.model is None
