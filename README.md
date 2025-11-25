@@ -130,6 +130,34 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Local Models with Ollama
+
+Run open-source LLMs locally without API keys:
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import OllamaProvider, ProviderConfig
+
+async def main():
+    router = Router(strategy="first-available")
+
+    ollama_config = ProviderConfig(
+        name="ollama",
+        model="llama3",  # or "mistral", "phi", etc.
+        base_url="http://localhost:11434",  # optional; defaults to localhost
+    )
+    router.add_provider(OllamaProvider(ollama_config))
+
+    response = await router.route("Why is the sky blue?")
+    print(response)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Requirements:** Install Ollama from <https://ollama.ai> and pull a model (e.g., `ollama pull llama3`).
+
 The MockProvider simulates LLM behavior without requiring API credentials, while GigaChatProvider and YandexGPTProvider provide full integration with their respective APIs.
 
 ## Installation
@@ -266,10 +294,11 @@ See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
   - Support for temperature and maxTokens parameters
   - Support for yandexgpt/latest and yandexgpt-lite/latest models
   - Comprehensive error handling
+- ✅ **OllamaProvider** — Local models (Llama 3, Mistral, Phi) via Ollama API
 
 ### Planned Providers
 
-- [ ] Ollama (local models)
+- [ ] Additional open-source providers (TBD)
 
 ## Documentation
 
