@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![PyPI](https://img.shields.io/pypi/v/multi-llm-orchestrator.svg)
 ![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen.svg)
-![Tests](https://img.shields.io/badge/tests-99%20passed-success.svg)
+![Tests](https://img.shields.io/badge/tests-117%20passed-success.svg)
 
 A unified interface for orchestrating multiple Large Language Model providers with intelligent routing and fallback mechanisms.
 
@@ -299,6 +299,41 @@ See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
 ### Planned Providers
 
 - [ ] Additional open-source providers (TBD)
+
+## LangChain Integration
+
+> **Note:** Requires optional dependency. Install with:
+> ```bash
+> pip install multi-llm-orchestrator[langchain]
+> ```
+
+Use Multi-LLM Orchestrator providers with LangChain chains, prompts, and other LangChain components:
+
+```python
+from langchain_core.prompts import ChatPromptTemplate
+from orchestrator.langchain import MultiLLMOrchestrator
+from orchestrator import Router
+from orchestrator.providers import GigaChatProvider, ProviderConfig
+
+# Create router with providers
+router = Router(strategy="round-robin")
+config = ProviderConfig(
+    name="gigachat",
+    api_key="your_api_key",
+    model="GigaChat"
+)
+router.add_provider(GigaChatProvider(config))
+
+# Use as LangChain LLM
+llm = MultiLLMOrchestrator(router=router)
+
+# Work with LangChain chains
+prompt = ChatPromptTemplate.from_template("Tell me about {topic}")
+chain = prompt | llm
+response = chain.invoke({"topic": "Python"})
+```
+
+The `MultiLLMOrchestrator` class implements LangChain's `BaseLLM` interface, supporting both synchronous and asynchronous calls. All routing strategies and fallback mechanisms work seamlessly with LangChain.
 
 ## Documentation
 

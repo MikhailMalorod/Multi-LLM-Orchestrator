@@ -38,6 +38,9 @@ pyyaml = "^6.0"
 rich = "^13.7.0"
 typer = "^0.9.0"
 
+[tool.poetry.extras]
+langchain = ["langchain-core>=0.1.0"]
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
 pytest-asyncio = "^0.21.0"
@@ -45,6 +48,7 @@ pytest-cov = "^4.1.0"
 pytest-httpx = "^0.21.0"
 ruff = "^0.1.0"
 mypy = "^1.7.0"
+langchain-core = ">=0.1.0"
 
 [build-system]
 requires = ["poetry-core"]
