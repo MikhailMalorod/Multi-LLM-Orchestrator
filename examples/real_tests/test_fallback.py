@@ -1,20 +1,27 @@
 import asyncio
 import os
+
 from dotenv import load_dotenv
+
 from orchestrator import Router
-from orchestrator.providers import GigaChatProvider, YandexGPTProvider, MockProvider, ProviderConfig
+from orchestrator.providers import (
+    GigaChatProvider,
+    MockProvider,
+    ProviderConfig,
+    YandexGPTProvider,
+)
 
 load_dotenv()
 
 async def main():
     print("🧪 Тест Fallback (автоматическое переключение)...")
-    
+
     router = Router(strategy="first-available")
-    
+
     # Добавляем Mock с режимом таймаута (будет падать)
     mock_config = ProviderConfig(name="mock-fail", model="mock-timeout")
     router.add_provider(MockProvider(mock_config))
-    
+
     # Добавляем реальные провайдеры (они подхватят запрос)
     gigachat_config = ProviderConfig(
         name="gigachat",
@@ -23,7 +30,7 @@ async def main():
         model="GigaChat"
     )
     router.add_provider(GigaChatProvider(gigachat_config))
-    
+
     yandex_config = ProviderConfig(
         name="yandexgpt",
         api_key=os.getenv("YANDEXGPT_API_KEY"),
@@ -31,7 +38,7 @@ async def main():
         model="yandexgpt/latest"
     )
     router.add_provider(YandexGPTProvider(yandex_config))
-    
+
     # Запрос должен автоматически переключиться на рабочий провайдер
     print("\n1. Запрос (mock-fail → gigachat → yandex)...")
     response = await router.route("Привет! Как дела?")
