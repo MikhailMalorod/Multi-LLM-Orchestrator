@@ -271,7 +271,7 @@ See [mock.py](src/orchestrator/providers/mock.py) for all available modes and de
 
 ## Roadmap
 
-See [STRATEGY.md](STRATEGY.md) for the detailed roadmap and development plan.
+See our [GitHub Issues](https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues) for planned features and roadmap updates.
 
 ### Current Status
 
@@ -343,7 +343,6 @@ The `MultiLLMOrchestrator` class implements LangChain's `BaseLLM` interface, sup
   - [GigaChat Provider](docs/providers/gigachat.md)
   - [YandexGPT Provider](docs/providers/yandexgpt.md)
   - [Creating Custom Provider](docs/providers/custom_provider.md)
-- **[STRATEGY.md](STRATEGY.md)** — Project roadmap and development plan
 - **[routing_demo.py](examples/routing_demo.py)** — Interactive demonstration of routing strategies and fallback mechanisms
 
 ## Contributing
