@@ -8,7 +8,7 @@ exception hierarchy, and the abstract base class that all providers must impleme
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -354,6 +354,62 @@ class BaseProvider(ABC):
             ```
         """
         pass
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        params: GenerationParams | None = None
+    ) -> AsyncIterator[str]:
+        """Generate text completion with streaming (optional).
+
+        This method provides streaming support for text generation, yielding
+        chunks of text as they become available. The default implementation
+        falls back to non-streaming `generate()` and yields the complete
+        result as a single chunk.
+
+        Providers that support streaming should override this method to
+        provide incremental text generation. This ensures backward compatibility:
+        providers without streaming support will still work, but will return
+        the entire response at once.
+
+        Args:
+            prompt: Input text prompt to generate completion for
+            params: Optional generation parameters (temperature, max_tokens, etc.)
+                   If None, provider defaults will be used
+
+        Yields:
+            Chunks of generated text as they become available. For providers
+            without streaming support, this will be a single chunk containing
+            the complete response.
+
+        Raises:
+            AuthenticationError: If API authentication fails
+            RateLimitError: If provider rate limit is exceeded
+            TimeoutError: If request times out
+            InvalidRequestError: If request parameters are invalid
+            ProviderError: For other provider-specific errors
+
+        Example:
+            ```python
+            # Basic streaming usage
+            async for chunk in provider.generate_stream("What is Python?"):
+                print(chunk, end="", flush=True)
+
+            # With custom parameters
+            params = GenerationParams(temperature=0.8, max_tokens=500)
+            async for chunk in provider.generate_stream("Write a story", params=params):
+                print(chunk, end="", flush=True)
+            ```
+
+        Note:
+            This is a default implementation that calls `generate()` and yields
+            the result as a single chunk. Providers with native streaming support
+            should override this method to provide incremental chunks.
+        """
+        # Default implementation: fallback to non-streaming generate()
+        # This ensures backward compatibility for providers without streaming
+        result = await self.generate(prompt, params)
+        yield result
 
     def get_model_info(self) -> dict[str, Any]:
         """Get provider and model metadata.

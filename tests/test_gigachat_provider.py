@@ -545,3 +545,213 @@ class TestGigaChatProviderConfig:
         provider = GigaChatProvider(config)
         assert provider.config.verify_ssl is False
 
+
+class TestGigaChatProviderStreaming:
+    """Test GigaChatProvider.generate_stream() functionality."""
+
+    @pytest.mark.asyncio
+    async def test_gigachat_streaming_normal_flow(
+        self, httpx_mock: pytest_httpx.HTTPXMock
+    ) -> None:
+        """Test normal streaming flow with SSE format.
+
+        Verifies that generate_stream() correctly parses SSE stream and yields
+        chunks that, when concatenated, form the complete response.
+        """
+        # Mock OAuth2 endpoint
+        httpx_mock.add_response(
+            url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            method="POST",
+            json={"access_token": "test_token", "expires_at": 9999999999000},
+        )
+
+        # Mock SSE streaming response
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+            'data: {"choices":[{"delta":{"content":" world"}}]}',
+            'data: {"choices":[{"delta":{"content":"!"}}]}',
+            "data: [DONE]",
+        ]
+
+        def stream_response(request: httpx.Request) -> httpx.Response:
+            """Create a streaming response with SSE lines."""
+            import asyncio
+
+            async def generate() -> httpx.Response:
+                # Create a mock streaming response
+                response = httpx.Response(
+                    status_code=200,
+                    headers={"Content-Type": "text/event-stream"},
+                )
+                # We'll use aiter_lines() which will be mocked
+                return response
+
+            # For pytest-httpx, we need to return a Response with streaming content
+            # Use a simple approach: return response with text content
+            content = "\n".join(sse_lines) + "\n"
+            return httpx.Response(
+                status_code=200,
+                headers={"Content-Type": "text/event-stream"},
+                content=content.encode(),
+            )
+
+        httpx_mock.add_callback(
+            url="https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+            method="POST",
+            callback=stream_response,
+        )
+
+        config = ProviderConfig(name="gigachat", api_key="test_key")
+        provider = GigaChatProvider(config)
+
+        # Stream and collect chunks
+        chunks = []
+        async for chunk in provider.generate_stream("Hello"):
+            chunks.append(chunk)
+
+        # Verify chunks were received
+        assert len(chunks) == 3
+        assert "".join(chunks) == "Hello world!"
+
+    @pytest.mark.asyncio
+    async def test_gigachat_streaming_401_retry(
+        self, httpx_mock: pytest_httpx.HTTPXMock
+    ) -> None:
+        """Test that 401 before streaming starts triggers retry.
+
+        Verifies that when 401 occurs before the first chunk, provider refreshes
+        token and retries the streaming request once.
+        """
+        # Mock OAuth2 endpoint - initial token
+        httpx_mock.add_response(
+            url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            method="POST",
+            json={"access_token": "token1", "expires_at": 9999999999000},
+        )
+
+        # First request returns 401 (token expired)
+        httpx_mock.add_response(
+            url="https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+            method="POST",
+            status_code=401,
+            json={"message": "Token expired"},
+        )
+
+        # Mock OAuth2 endpoint - token refresh
+        httpx_mock.add_response(
+            url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            method="POST",
+            json={"access_token": "token2", "expires_at": 9999999999000},
+        )
+
+        # Retry request succeeds with streaming
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"Retry"}}]}',
+            'data: {"choices":[{"delta":{"content":" success"}}]}',
+            "data: [DONE]",
+        ]
+        content = "\n".join(sse_lines) + "\n"
+        httpx_mock.add_response(
+            url="https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+            method="POST",
+            status_code=200,
+            headers={"Content-Type": "text/event-stream"},
+            content=content.encode(),
+        )
+
+        config = ProviderConfig(name="gigachat", api_key="test_key")
+        provider = GigaChatProvider(config)
+
+        # Stream should succeed after retry
+        chunks = []
+        async for chunk in provider.generate_stream("test"):
+            chunks.append(chunk)
+
+        assert "".join(chunks) == "Retry success"
+
+    @pytest.mark.asyncio
+    async def test_gigachat_streaming_parse_error_handling(
+        self, httpx_mock: pytest_httpx.HTTPXMock
+    ) -> None:
+        """Test that malformed SSE chunks are handled gracefully.
+
+        Verifies that if a chunk cannot be parsed (invalid JSON or missing structure),
+        it logs a warning and continues processing the next chunk.
+        """
+        # Mock OAuth2 endpoint
+        httpx_mock.add_response(
+            url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            method="POST",
+            json={"access_token": "test_token", "expires_at": 9999999999000},
+        )
+
+        # SSE stream with one malformed chunk
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+            "data: invalid json {",  # Malformed JSON
+            'data: {"choices":[{"delta":{"content":" world"}}]}',
+            "data: [DONE]",
+        ]
+        content = "\n".join(sse_lines) + "\n"
+        httpx_mock.add_response(
+            url="https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+            method="POST",
+            status_code=200,
+            headers={"Content-Type": "text/event-stream"},
+            content=content.encode(),
+        )
+
+        config = ProviderConfig(name="gigachat", api_key="test_key")
+        provider = GigaChatProvider(config)
+
+        # Stream should skip malformed chunk and continue
+        chunks = []
+        async for chunk in provider.generate_stream("test"):
+            chunks.append(chunk)
+
+        # Should have received valid chunks (Hello and world)
+        assert len(chunks) == 2
+        assert "".join(chunks) == "Hello world"
+
+    @pytest.mark.asyncio
+    async def test_gigachat_streaming_empty_content_chunks(
+        self, httpx_mock: pytest_httpx.HTTPXMock
+    ) -> None:
+        """Test that chunks with empty content are skipped.
+
+        Verifies that SSE events with empty or missing content are not yielded.
+        """
+        # Mock OAuth2 endpoint
+        httpx_mock.add_response(
+            url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            method="POST",
+            json={"access_token": "test_token", "expires_at": 9999999999000},
+        )
+
+        # SSE stream with empty content chunks
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+            'data: {"choices":[{"delta":{}}]}',  # Empty content
+            'data: {"choices":[{"delta":{"content":" world"}}]}',
+            "data: [DONE]",
+        ]
+        content = "\n".join(sse_lines) + "\n"
+        httpx_mock.add_response(
+            url="https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+            method="POST",
+            status_code=200,
+            headers={"Content-Type": "text/event-stream"},
+            content=content.encode(),
+        )
+
+        config = ProviderConfig(name="gigachat", api_key="test_key")
+        provider = GigaChatProvider(config)
+
+        # Stream should skip empty chunks
+        chunks = []
+        async for chunk in provider.generate_stream("test"):
+            chunks.append(chunk)
+
+        # Should only have non-empty chunks
+        assert len(chunks) == 2
+        assert "".join(chunks) == "Hello world"

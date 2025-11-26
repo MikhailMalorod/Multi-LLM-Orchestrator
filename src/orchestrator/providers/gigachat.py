@@ -38,8 +38,10 @@ Example:
 """
 
 import asyncio
+import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import httpx
@@ -474,4 +476,216 @@ class GigaChatProvider(BaseProvider):
             raise ProviderError(f"Server error: {error_message}")
         else:
             raise ProviderError(f"Unknown error (HTTP {response.status_code}): {error_message}")
+
+    async def _parse_sse_stream(
+        self, response: httpx.Response
+    ) -> AsyncIterator[str]:
+        """Parse Server-Sent Events (SSE) stream from GigaChat API.
+
+        This helper method parses SSE format responses from GigaChat streaming
+        endpoint. It extracts text content from each SSE event and yields chunks
+        incrementally.
+
+        SSE Format:
+            - Each line starts with "data: " prefix
+            - Content is JSON: {"choices":[{"delta":{"content":"..."}}]}
+            - Stream ends with "data: [DONE]"
+
+        Args:
+            response: HTTPX streaming response object
+
+        Yields:
+            Text content chunks from the SSE stream. Each chunk is extracted from
+            choices[0].delta.content in the JSON payload.
+
+        Note:
+            This method handles parsing errors gracefully: if a line cannot be
+            parsed as JSON or doesn't contain expected structure, it logs a warning
+            and continues to the next line. This ensures streaming continues even
+            if some events are malformed.
+        """
+        async for line in response.aiter_lines():
+            # Skip empty lines and lines that don't start with "data: "
+            if not line or not line.startswith("data: "):
+                continue
+
+            # Extract data after "data: " prefix
+            data_str = line[6:].strip()  # Remove "data: " prefix and whitespace
+
+            # Check for end-of-stream marker
+            if data_str == "[DONE]":
+                break
+
+            # Parse JSON payload
+            try:
+                data = json.loads(data_str)
+                # Extract content from choices[0].delta.content
+                # Structure: {"choices":[{"delta":{"content":"..."}}]}
+                content = (
+                    data.get("choices", [{}])[0]
+                    .get("delta", {})
+                    .get("content", "")
+                )
+
+                # Only yield non-empty content
+                if content:
+                    yield content
+
+            except json.JSONDecodeError as e:
+                # Log warning but continue processing (some events might be malformed)
+                self.logger.warning(
+                    f"Failed to parse SSE JSON chunk: {data_str[:100]}. Error: {e}"
+                )
+                continue
+            except (KeyError, IndexError, TypeError) as e:
+                # Log warning for missing expected structure
+                self.logger.warning(
+                    f"Unexpected SSE structure in chunk: {data_str[:100]}. Error: {e}"
+                )
+                continue
+
+    async def generate_stream(
+        self, prompt: str, params: GenerationParams | None = None
+    ) -> AsyncIterator[str]:
+        """Generate text completion with streaming via Server-Sent Events (SSE).
+
+        This method implements streaming text generation using GigaChat's SSE
+        endpoint. It works similarly to `generate()`, but yields chunks incrementally
+        as they arrive from the API instead of waiting for the complete response.
+
+        The method handles:
+        1. OAuth2 token management (automatic refresh)
+        2. 401 authentication errors (retry once before streaming starts)
+        3. SSE stream parsing and content extraction
+        4. Error handling consistent with `generate()`
+
+        Important: Token refresh (401 handling) only works **before** the first chunk
+        is yielded. Once streaming starts, any errors will raise exceptions immediately.
+
+        Args:
+            prompt: Input text prompt to generate completion for
+            params: Optional generation parameters (temperature, max_tokens, etc.)
+                   If None, provider defaults will be used
+
+        Yields:
+            Chunks of generated text as they arrive from GigaChat API. Each chunk
+            is extracted from the SSE stream's choices[0].delta.content field.
+
+        Raises:
+            AuthenticationError: If API authentication fails (after retry)
+            RateLimitError: If provider rate limit is exceeded
+            TimeoutError: If request times out
+            InvalidRequestError: If request parameters are invalid
+            ProviderError: For other provider-specific errors
+
+        Example:
+            ```python
+            # Simple streaming
+            async for chunk in provider.generate_stream("What is Python?"):
+                print(chunk, end="", flush=True)
+
+            # With custom parameters
+            params = GenerationParams(temperature=0.8, max_tokens=500)
+            async for chunk in provider.generate_stream("Write a story", params=params):
+                print(chunk, end="", flush=True)
+            ```
+
+        Note:
+            The streaming implementation uses Server-Sent Events (SSE) format.
+            The stream is parsed line-by-line, extracting JSON payloads from
+            "data: {...}" lines. The stream ends when "data: [DONE]" is received.
+        """
+        # Ensure valid access token before making request
+        await self._ensure_access_token()
+
+        # Prepare API endpoint URL
+        base_url = self.config.base_url or self.DEFAULT_BASE_URL
+        url = f"{base_url}/chat/completions"
+
+        # Prepare request headers
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "RqUID": str(uuid.uuid4()),
+            "Content-Type": "application/json",
+        }
+
+        # Prepare request payload (same as generate(), but with stream=True)
+        payload: dict[str, Any] = {
+            "model": self.config.model or self.DEFAULT_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,  # Enable streaming
+        }
+
+        # Add optional generation parameters from params
+        if params:
+            if params.max_tokens:
+                payload["max_tokens"] = params.max_tokens
+            if params.temperature is not None:
+                payload["temperature"] = params.temperature
+            if params.top_p is not None:
+                payload["top_p"] = params.top_p
+            if params.stop:
+                payload["stop"] = params.stop
+
+        self.logger.debug(
+            f"Sending streaming request to GigaChat API: model={payload['model']}, "
+            f"prompt_length={len(prompt)}"
+        )
+
+        try:
+            # Use streaming request instead of regular POST
+            async with self._client.stream(
+                "POST", url, headers=headers, json=payload
+            ) as response:
+                # Check for 401 BEFORE starting to read the stream
+                # This allows us to retry with a fresh token
+                if response.status_code == 401:
+                    self.logger.warning(
+                        "Token expired before streaming, refreshing and retrying..."
+                    )
+                    # Force token refresh by clearing current token
+                    async with self._token_lock:
+                        self._access_token = None
+                        self._token_expires_at = None
+                    # Refresh token
+                    await self._ensure_access_token()
+                    # Update headers with new token and new RqUID
+                    headers["Authorization"] = f"Bearer {self._access_token}"
+                    headers["RqUID"] = str(uuid.uuid4())
+                    # Retry streaming request ONCE
+                    async with self._client.stream(
+                        "POST", url, headers=headers, json=payload
+                    ) as retry_response:
+                        # Check status code after retry
+                        if retry_response.status_code != 200:
+                            self._handle_error(retry_response)
+                        # Parse and yield chunks from retry response
+                        async for chunk in self._parse_sse_stream(retry_response):
+                            yield chunk
+                    return
+
+                # Handle other errors (before reading stream)
+                if response.status_code != 200:
+                    self._handle_error(response)
+
+                # Parse and yield chunks from SSE stream
+                async for chunk in self._parse_sse_stream(response):
+                    yield chunk
+
+        except httpx.TimeoutException:
+            raise TimeoutError(
+                f"Streaming request to GigaChat API timed out after {self.config.timeout}s"
+            ) from None
+        except httpx.ConnectError as e:
+            raise ProviderError(f"Connection error to GigaChat API: {e}") from e
+        except httpx.NetworkError as e:
+            raise ProviderError(f"Network error to GigaChat API: {e}") from e
+        except ProviderError:
+            # Re-raise provider errors (AuthenticationError, RateLimitError, etc.)
+            raise
+        except Exception as e:
+            # Catch any other unexpected errors
+            raise ProviderError(
+                f"Unexpected error during streaming generation: {e}"
+            ) from e
 

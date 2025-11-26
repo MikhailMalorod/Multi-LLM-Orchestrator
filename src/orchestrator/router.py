@@ -2,6 +2,7 @@
 
 import logging
 import random
+from collections.abc import AsyncIterator
 
 from .providers.base import BaseProvider, GenerationParams, ProviderError
 
@@ -245,3 +246,123 @@ class Router:
         else:
             # This should never happen due to validation in __init__
             raise ValueError(f"Unknown strategy: {self.strategy}")
+
+    async def route_stream(
+        self,
+        prompt: str,
+        params: GenerationParams | None = None
+    ) -> AsyncIterator[str]:
+        """Route request with streaming response.
+
+        This method works like `route()` but yields chunks incrementally as they
+        become available. It supports automatic fallback like `route()`, but with
+        an important constraint: fallback is only attempted **before** the first
+        chunk is yielded. Once streaming has started, any errors will immediately
+        raise an exception without trying other providers.
+
+        This behavior ensures that clients receive consistent, coherent responses
+        without mixing chunks from different providers mid-stream.
+
+        Args:
+            prompt: Input text prompt to generate completion for
+            params: Optional generation parameters (temperature, max_tokens, etc.)
+                   If None, provider defaults will be used
+
+        Yields:
+            Chunks of text from the selected provider as they become available
+
+        Raises:
+            ProviderError: If no providers are registered
+            TimeoutError: If all providers timeout (before first chunk)
+            RateLimitError: If all providers hit rate limit (before first chunk)
+            AuthenticationError: If all providers fail authentication (before first chunk)
+            InvalidRequestError: If all providers receive invalid requests (before first chunk)
+            Exception: Any other exception from the last failed provider (before first chunk)
+                       or any exception after the first chunk is yielded
+
+        Example:
+            ```python
+            # Simple streaming
+            async for chunk in router.route_stream("What is Python?"):
+                print(chunk, end="", flush=True)
+
+            # With custom parameters
+            from orchestrator.providers.base import GenerationParams
+            params = GenerationParams(temperature=0.8, max_tokens=500)
+            async for chunk in router.route_stream("Write a poem", params=params):
+                print(chunk, end="", flush=True)
+            ```
+
+        Note:
+            Fallback behavior: If an error occurs before the first chunk is yielded,
+            the router will automatically try the next provider in the circular order.
+            However, once the first chunk is yielded, any subsequent errors will
+            immediately raise an exception to prevent mixing chunks from different providers.
+        """
+        # Check if any providers are registered
+        if not self.providers:
+            raise ProviderError("No providers registered")
+
+        # Select provider based on strategy
+        selected_provider = await self._select_provider()
+
+        # Find index of selected provider for fallback logic
+        selected_index = self.providers.index(selected_provider)
+
+        # Attempt to generate response with fallback
+        last_error: Exception | None = None
+
+        for i in range(len(self.providers)):
+            # Calculate provider index (circular, starting from selected)
+            index = (selected_index + i) % len(self.providers)
+            provider = self.providers[index]
+
+            try:
+                self.logger.info(f"Trying provider: {provider.config.name}")
+
+                # Track if we've yielded the first chunk
+                # Once the first chunk is sent, we cannot fallback to another provider
+                first_chunk_sent = False
+
+                try:
+                    # Stream chunks from the provider
+                    async for chunk in provider.generate_stream(prompt, params):
+                        # Mark that we've started streaming
+                        if not first_chunk_sent:
+                            first_chunk_sent = True
+
+                        # Yield the chunk to the caller
+                        yield chunk
+
+                    # If we get here, streaming completed successfully
+                    self.logger.info(
+                        f"Success with provider: {provider.config.name}"
+                    )
+                    return
+
+                except Exception as stream_error:
+                    # If error occurred after first chunk, we cannot fallback
+                    # Raise immediately to prevent mixing chunks from different providers
+                    if first_chunk_sent:
+                        self.logger.error(
+                            f"Streaming error after first chunk from provider "
+                            f"{provider.config.name}: {stream_error}. "
+                            f"Cannot fallback to prevent mixing chunks."
+                        )
+                        raise
+
+                    # If error occurred before first chunk, we can try next provider
+                    raise stream_error
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Provider {provider.config.name} failed: {e}, trying next"
+                )
+                last_error = e
+                continue
+
+        # All providers failed (before any chunks were yielded)
+        self.logger.error("All providers failed")
+        if last_error is None:
+            raise ProviderError("All providers failed")
+        raise last_error

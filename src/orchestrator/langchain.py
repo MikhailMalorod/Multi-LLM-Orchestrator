@@ -34,6 +34,7 @@ Example:
 """
 
 import asyncio
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 from pydantic import Field
@@ -263,6 +264,114 @@ if LANGCHAIN_AVAILABLE:
             params = self._map_params(stop, **kwargs)
             # Direct async call to router.route()
             return await self.router.route(prompt, params=params)
+
+        async def _astream(  # type: ignore[override]
+            self,
+            prompt: str,
+            stop: list[str] | None = None,
+            run_manager: Any = None,
+            **kwargs: Any,
+        ) -> AsyncIterator[str]:
+            """Stream text completion asynchronously.
+
+            This method is called by LangChain for asynchronous streaming text generation.
+            It maps LangChain parameters to GenerationParams and streams chunks
+            directly from the Router's route_stream method.
+
+            Args:
+                prompt: Input text prompt to generate completion for
+                stop: Optional list of stop sequences that will stop generation
+                **kwargs: Additional generation parameters (temperature, max_tokens, etc.)
+
+            Yields:
+                Chunks of generated text as they become available from the Router
+
+            Raises:
+                ProviderError: If no providers are registered or all providers fail
+                TimeoutError: If all providers timeout
+                RateLimitError: If all providers hit rate limit
+                AuthenticationError: If all providers fail authentication
+                InvalidRequestError: If all providers receive invalid requests
+
+            Example:
+                ```python
+                async for chunk in llm._astream("What is Python?"):
+                    print(chunk, end="", flush=True)
+                ```
+            """
+            # Map parameters (uses defaults from GenerationParams for missing params)
+            params = self._map_params(stop, **kwargs)
+            # Stream directly from router.route_stream()
+            async for chunk in self.router.route_stream(prompt, params=params):
+                yield chunk
+
+        def _stream(  # type: ignore[override]
+            self,
+            prompt: str,
+            stop: list[str] | None = None,
+            run_manager: Any = None,
+            **kwargs: Any,
+        ) -> Iterator[str]:
+            """Stream text completion synchronously.
+
+            This method is called by LangChain for synchronous streaming text generation.
+            It maps LangChain parameters to GenerationParams and converts the async
+            streaming generator from router.route_stream() into a synchronous iterator.
+
+            The conversion is done by creating a dedicated event loop and using
+            run_until_complete() to fetch chunks from the async generator. This approach
+            is consistent with the pattern used in _call() and _generate() methods.
+
+            Args:
+                prompt: Input text prompt to generate completion for
+                stop: Optional list of stop sequences that will stop generation
+                **kwargs: Additional generation parameters (temperature, max_tokens, etc.)
+
+            Yields:
+                Chunks of generated text as they become available from the Router
+
+            Raises:
+                ProviderError: If no providers are registered or all providers fail
+                TimeoutError: If all providers timeout
+                RateLimitError: If all providers hit rate limit
+                AuthenticationError: If all providers fail authentication
+                InvalidRequestError: If all providers receive invalid requests
+
+            Example:
+                ```python
+                for chunk in llm._stream("What is Python?"):
+                    print(chunk, end="", flush=True)
+                ```
+
+            Note:
+                This method creates a new event loop for streaming, which is safe
+                for use in synchronous contexts (like LangChain's sync API). However,
+                it should not be called from within an existing async context.
+            """
+            # Map parameters (uses defaults from GenerationParams for missing params)
+            params = self._map_params(stop, **kwargs)
+
+            # Create a dedicated event loop for streaming
+            # This is consistent with _call() and _generate() which use asyncio.run()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # Get async generator from router
+                async_gen = self.router.route_stream(prompt, params=params)
+
+                # Convert async generator to sync iterator
+                while True:
+                    try:
+                        # Fetch next chunk from async generator
+                        chunk = loop.run_until_complete(async_gen.__anext__())
+                        yield chunk
+                    except StopAsyncIteration:
+                        # Generator exhausted, exit loop
+                        break
+            finally:
+                # Always close the event loop to clean up resources
+                loop.close()
 
 else:
 

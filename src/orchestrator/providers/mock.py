@@ -12,6 +12,7 @@ The MockProvider is useful for:
 """
 
 import asyncio
+from collections.abc import AsyncIterator
 
 from .base import (
     AuthenticationError,
@@ -203,4 +204,104 @@ class MockProvider(BaseProvider):
         if "unhealthy" in (self.config.model or "").lower():
             return False
         return True
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        params: GenerationParams | None = None
+    ) -> AsyncIterator[str]:
+        """Generate mock response with simulated streaming.
+
+        This method provides streaming support for MockProvider, simulating
+        incremental text generation by breaking the response into words and
+        yielding them with small delays. It supports all the same simulation
+        modes as `generate()`, including error modes.
+
+        For error simulation modes (mock-timeout, mock-ratelimit, etc.),
+        the corresponding exception is raised immediately, before any chunks
+        are yielded. This allows testing fallback behavior in streaming scenarios.
+
+        For normal mode, the full response is generated using `generate()` (which
+        respects max_tokens), then split into words and streamed incrementally
+        with 0.05s delays between words.
+
+        Args:
+            prompt: Input text prompt to generate completion for
+            params: Optional generation parameters. Only max_tokens is respected
+                   (interpreted as character limit). Other parameters are ignored.
+
+        Yields:
+            Chunks of generated text (words) as they become available. In normal
+            mode, each chunk is a word followed by a space. The complete response
+            when concatenated matches the result of `generate()`.
+
+        Raises:
+            TimeoutError: If mode is "mock-timeout"
+            RateLimitError: If mode is "mock-ratelimit"
+            AuthenticationError: If mode is "mock-auth-error"
+            InvalidRequestError: If mode is "mock-invalid-request"
+
+        Example:
+            ```python
+            # Normal streaming
+            config = ProviderConfig(name="mock", model="mock-normal")
+            provider = MockProvider(config)
+            async for chunk in provider.generate_stream("Hello"):
+                print(chunk, end="", flush=True)
+            # Output: "Mock response to: Hello" (streamed word by word)
+
+            # Error mode (raises immediately)
+            config = ProviderConfig(name="mock", model="mock-timeout")
+            provider = MockProvider(config)
+            try:
+                async for chunk in provider.generate_stream("Test"):
+                    print(chunk)
+            except TimeoutError:
+                print("Timeout simulated in streaming")
+            ```
+
+        Note:
+            The streaming implementation trusts `generate()` to handle max_tokens
+            correctly. The response is generated first, then streamed word by word.
+            This ensures consistency between `generate()` and `generate_stream()` results.
+        """
+        # Determine mode (case-insensitive, default to "mock-normal")
+        mode = (self.config.model or "mock-normal").lower()
+
+        # Handle error simulation modes - raise immediately (before any chunks)
+        # This allows Router to fallback to another provider
+        if mode == "mock-timeout":
+            raise TimeoutError("Mock timeout simulation")
+        elif mode == "mock-ratelimit":
+            raise RateLimitError("Mock rate limit simulation")
+        elif mode == "mock-auth-error":
+            raise AuthenticationError("Mock authentication failure")
+        elif mode == "mock-invalid-request":
+            raise InvalidRequestError("Mock invalid request")
+
+        # Normal mode: generate full response (respects max_tokens via generate())
+        # Then stream it word by word with small delays
+        full_response = await self.generate(prompt, params)
+
+        # Split response into words (preserving spaces)
+        # We'll add spaces back when yielding to maintain readability
+        words = full_response.split()
+
+        # Stream words one by one with delay
+        for i, word in enumerate(words):
+            # Add space after word (except for last word, which already has
+            # appropriate spacing from the original response)
+            if i < len(words) - 1:
+                chunk = word + " "
+            else:
+                # For the last word, check if original response ended with space
+                # If the original response had trailing space, preserve it
+                if full_response.endswith(" "):
+                    chunk = word + " "
+                else:
+                    chunk = word
+
+            yield chunk
+            # Small delay between chunks to simulate streaming
+            await asyncio.sleep(0.05)
 

@@ -335,6 +335,61 @@ response = chain.invoke({"topic": "Python"})
 
 The `MultiLLMOrchestrator` class implements LangChain's `BaseLLM` interface, supporting both synchronous and asynchronous calls. All routing strategies and fallback mechanisms work seamlessly with LangChain.
 
+## Streaming Support
+
+Multi-LLM Orchestrator now supports streaming responses, allowing you to receive text chunks incrementally as they are generated. This is especially useful for real-time applications and improved user experience.
+
+### Basic Streaming with Router
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, MockProvider
+
+async def main():
+    router = Router(strategy="round-robin")
+    config = ProviderConfig(name="mock", model="mock-normal")
+    router.add_provider(MockProvider(config))
+    
+    # Stream response chunk by chunk
+    async for chunk in router.route_stream("What is Python?"):
+        print(chunk, end="", flush=True)
+
+asyncio.run(main())
+```
+
+### Streaming with LangChain
+
+```python
+from orchestrator.langchain import MultiLLMOrchestrator
+from orchestrator import Router
+from orchestrator.providers import MockProvider, ProviderConfig
+
+router = Router(strategy="round-robin")
+router.add_provider(MockProvider(ProviderConfig(name="mock", model="mock-normal")))
+
+llm = MultiLLMOrchestrator(router=router)
+
+# Async streaming
+async for chunk in llm._astream("What is Python?"):
+    print(chunk, end="", flush=True)
+
+# Sync streaming
+for chunk in llm._stream("What is Python?"):
+    print(chunk, end="", flush=True)
+```
+
+### Streaming Features
+
+- **Incremental responses**: Receive text chunks as they are generated
+- **Fallback support**: Automatic provider fallback works before the first chunk is yielded
+- **Provider support**: Currently supported in MockProvider and GigaChatProvider
+- **LangChain integration**: Full support for both sync and async streaming in LangChain
+
+### Streaming Examples
+
+See [streaming_demo.py](examples/streaming_demo.py) and [langchain_streaming_demo.py](examples/langchain_streaming_demo.py) for complete examples.
+
 ## Documentation
 
 - **[Architecture Overview](docs/architecture.md)** — System design and components
