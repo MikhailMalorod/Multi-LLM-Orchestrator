@@ -6,6 +6,13 @@
 ![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen.svg)
 ![Tests](https://img.shields.io/badge/tests-133%20passed-success.svg)
 
+## Architecture
+
+![Multi-LLM Orchestrator Architecture](docs/images/architecture.png)
+
+Multi-LLM Orchestrator provides automatic failover between GigaChat, YandexGPT, and Ollama with streaming support.
+
+
 A unified interface for orchestrating multiple Large Language Model providers with intelligent routing and fallback mechanisms.
 
 ## Overview
