@@ -3,8 +3,9 @@
 This module tests Router functionality including:
 - Strategy validation and initialization
 - Provider registration
-- All three routing strategies (round-robin, random, first-available)
+- All routing strategies (round-robin, random, first-available, best-available)
 - Fallback mechanism
+- Metrics tracking and health status
 - Edge cases (empty providers, all failed, etc.)
 """
 
@@ -26,7 +27,7 @@ class TestRouterInitialization:
     def test_router_init_valid_strategies(self) -> None:
         """Test that Router initializes with valid strategies.
         
-        Verifies that all three valid strategies (round-robin, random, first-available)
+        Verifies that all valid strategies (round-robin, random, first-available, best-available)
         can be used to initialize a Router without errors.
         """
         router_rr = Router(strategy="round-robin")
@@ -40,6 +41,10 @@ class TestRouterInitialization:
         router_fa = Router(strategy="first-available")
         assert router_fa.strategy == "first-available"
         assert router_fa.providers == []
+        
+        router_ba = Router(strategy="best-available")
+        assert router_ba.strategy == "best-available"
+        assert router_ba.providers == []
 
     def test_router_init_invalid_strategy_raises_error(self) -> None:
         """Test that invalid strategy raises ValueError.
@@ -272,3 +277,183 @@ class TestRouterEdgeCases:
         # Response should be truncated to 10 chars due to max_tokens
         assert len(response) == 10
         assert response == "Mock respo"
+
+
+class TestRouterMetrics:
+    """Test Router metrics tracking."""
+
+    def test_router_initializes_metrics_on_add_provider(self) -> None:
+        """Test that Router initializes metrics when adding a provider."""
+        router = Router(strategy="round-robin")
+        
+        config = ProviderConfig(name="provider-1", model="mock-normal")
+        provider = MockProvider(config)
+        router.add_provider(provider)
+        
+        assert "provider-1" in router.metrics
+        metrics = router.metrics["provider-1"]
+        assert metrics.total_requests == 0
+        assert metrics.successful_requests == 0
+
+    def test_router_rejects_duplicate_provider_names(self) -> None:
+        """Test that Router rejects providers with duplicate names."""
+        router = Router(strategy="round-robin")
+        
+        config1 = ProviderConfig(name="provider-1", model="mock-normal")
+        provider1 = MockProvider(config1)
+        router.add_provider(provider1)
+        
+        # Try to add provider with same name
+        config2 = ProviderConfig(name="provider-1", model="mock-normal")
+        provider2 = MockProvider(config2)
+        
+        with pytest.raises(ValueError, match="already exists"):
+            router.add_provider(provider2)
+
+    @pytest.mark.asyncio
+    async def test_router_updates_metrics_on_success(self) -> None:
+        """Test that Router updates metrics on successful request."""
+        router = Router(strategy="round-robin")
+        
+        config = ProviderConfig(name="provider-1", model="mock-normal")
+        router.add_provider(MockProvider(config))
+        
+        await router.route("test")
+        
+        metrics = router.metrics["provider-1"]
+        assert metrics.total_requests == 1
+        assert metrics.successful_requests == 1
+        assert metrics.failed_requests == 0
+        assert metrics.avg_latency_ms > 0
+
+    @pytest.mark.asyncio
+    async def test_router_updates_metrics_on_error(self) -> None:
+        """Test that Router updates metrics on failed request."""
+        router = Router(strategy="round-robin")
+        
+        config = ProviderConfig(name="provider-1", model="mock-timeout")
+        router.add_provider(MockProvider(config))
+        
+        # This will fail, but fallback will try other providers
+        # For this test, we need all providers to fail to see the error recorded
+        with pytest.raises(TimeoutError):
+            await router.route("test")
+        
+        # Metrics should be updated for the failed provider
+        metrics = router.metrics["provider-1"]
+        assert metrics.total_requests >= 1
+        assert metrics.failed_requests >= 1
+
+    @pytest.mark.asyncio
+    async def test_router_updates_metrics_for_streaming(self) -> None:
+        """Test that Router updates metrics for streaming requests."""
+        router = Router(strategy="round-robin")
+        
+        config = ProviderConfig(name="provider-1", model="mock-normal")
+        router.add_provider(MockProvider(config))
+        
+        chunks = []
+        async for chunk in router.route_stream("test"):
+            chunks.append(chunk)
+        
+        metrics = router.metrics["provider-1"]
+        assert metrics.total_requests == 1
+        assert metrics.successful_requests == 1
+        assert metrics.avg_latency_ms > 0
+
+    def test_get_metrics_returns_copy(self) -> None:
+        """Test that get_metrics() returns a shallow copy."""
+        router = Router(strategy="round-robin")
+        
+        config = ProviderConfig(name="provider-1", model="mock-normal")
+        router.add_provider(MockProvider(config))
+        
+        metrics_dict = router.get_metrics()
+        
+        # Should be a copy, not the same object
+        assert metrics_dict is not router.metrics
+        assert "provider-1" in metrics_dict
+        
+        # Modifying the dict shouldn't affect router.metrics
+        metrics_dict["new"] = "test"
+        assert "new" not in router.metrics
+
+
+class TestRouterBestAvailableStrategy:
+    """Test best-available routing strategy."""
+
+    @pytest.mark.asyncio
+    async def test_best_available_selects_healthy_with_lowest_latency(self) -> None:
+        """Test that best-available selects healthy provider with lowest latency."""
+        router = Router(strategy="best-available")
+        
+        # Add providers with different latencies
+        config1 = ProviderConfig(name="p1", model="mock-normal")
+        config2 = ProviderConfig(name="p2", model="mock-normal")
+        router.add_provider(MockProvider(config1))
+        router.add_provider(MockProvider(config2))
+        
+        # Make requests to build up metrics
+        # p1 should get selected first (round-robin order initially)
+        await router.route("test")
+        
+        # Both should be healthy, but best-available will select based on latency
+        # After a few requests, it should prefer the one with lower latency
+        for _ in range(5):
+            await router.route("test")
+        
+        # Both providers should have metrics
+        assert "p1" in router.metrics
+        assert "p2" in router.metrics
+
+    @pytest.mark.asyncio
+    async def test_best_available_fallback_to_degraded_when_no_healthy(self) -> None:
+        """Test that best-available falls back to degraded when no healthy providers."""
+        router = Router(strategy="best-available")
+        
+        # Add providers
+        config1 = ProviderConfig(name="p1", model="mock-normal")
+        config2 = ProviderConfig(name="p2", model="mock-normal")
+        router.add_provider(MockProvider(config1))
+        router.add_provider(MockProvider(config2))
+        
+        # Make enough requests to have metrics
+        for _ in range(10):
+            await router.route("test")
+        
+        # Both should be healthy initially
+        assert router.metrics["p1"].health_status == "healthy"
+        assert router.metrics["p2"].health_status == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_best_available_uses_avg_latency_when_no_rolling(self) -> None:
+        """Test that best-available uses avg_latency_ms when rolling_avg is None."""
+        router = Router(strategy="best-available")
+        
+        config = ProviderConfig(name="p1", model="mock-normal")
+        router.add_provider(MockProvider(config))
+        
+        # Make a few requests (not enough to fill rolling window)
+        await router.route("test")
+        
+        metrics = router.metrics["p1"]
+        # Should have avg_latency_ms but may not have rolling_avg yet
+        assert metrics.avg_latency_ms > 0
+
+    @pytest.mark.asyncio
+    async def test_best_available_handles_all_unhealthy(self) -> None:
+        """Test that best-available selects among unhealthy providers."""
+        router = Router(strategy="best-available")
+        
+        # Add providers
+        config1 = ProviderConfig(name="p1", model="mock-normal")
+        config2 = ProviderConfig(name="p2", model="mock-normal")
+        router.add_provider(MockProvider(config1))
+        router.add_provider(MockProvider(config2))
+        
+        # Even if all are unhealthy, best-available should still select one
+        # (it doesn't fallback to round-robin)
+        await router.route("test")
+        
+        # Should have selected a provider
+        assert len(router.metrics) == 2

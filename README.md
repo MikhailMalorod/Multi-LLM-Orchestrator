@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![PyPI](https://img.shields.io/pypi/v/multi-llm-orchestrator.svg)
 ![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen.svg)
-![Tests](https://img.shields.io/badge/tests-133%20passed-success.svg)
+![Tests](https://img.shields.io/badge/tests-150+%20passed-success.svg)
 
 ## Architecture
 
@@ -17,7 +17,17 @@ A unified interface for orchestrating multiple Large Language Model providers wi
 
 ## Overview
 
-The Multi-LLM Orchestrator provides a seamless way to integrate and manage multiple LLM providers through a single, consistent interface. It supports intelligent routing strategies, automatic fallbacks, and provider-specific optimizations. Currently focused on Russian LLM providers (GigaChat, YandexGPT) with a flexible architecture that supports any LLM provider implementation.
+The Multi-LLM Orchestrator provides a seamless way to integrate and manage multiple LLM providers through a single, consistent interface. It supports intelligent routing strategies, automatic fallbacks, provider-level metrics tracking, and provider-specific optimizations. Currently focused on Russian LLM providers (GigaChat, YandexGPT) with a flexible architecture that supports any LLM provider implementation.
+
+## Features
+
+- **Multiple LLM Providers**: Unified interface for GigaChat, YandexGPT, Ollama, and custom providers
+- **Intelligent Routing**: Multiple routing strategies including round-robin, random, first-available, and best-available (health + latency aware)
+- **Automatic Fallback**: Seamless failover when providers fail
+- **Provider-level Metrics**: Track latency, success/failure rates, and health status for each provider
+- **Smart Routing Strategy**: `best-available` strategy selects the healthiest provider with lowest latency based on real-time metrics
+- **Streaming Support**: Incremental text generation with streaming responses
+- **LangChain Integration**: Optional compatibility layer for LangChain chains and prompts
 
 ## Quickstart
 
@@ -207,7 +217,7 @@ The Multi-LLM Orchestrator follows a modular architecture with clear separation 
                   │
                   ▼
          ┌────────────────┐
-         │     Router     │ ◄── Strategy: round-robin/random/first-available
+         │     Router     │ ◄── Strategy: round-robin/random/first-available/best-available
          └────────┬───────┘
                   │
       ┌───────────┼───────────┐
@@ -233,19 +243,54 @@ The Multi-LLM Orchestrator follows a modular architecture with clear separation 
 
 ## Routing Strategies
 
-The Router supports three routing strategies, each suitable for different use cases:
+The Router supports four routing strategies, each suitable for different use cases:
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
 | **round-robin** | Cycles through providers in a fixed order | Equal load distribution (recommended for production) |
 | **random** | Selects a random provider from available providers | Simple random selection for load balancing |
 | **first-available** | Selects the first healthy provider based on health checks | High availability scenarios with automatic unhealthy provider skipping |
+| **best-available** | Selects the healthiest provider with lowest latency based on real-time metrics | Production environments requiring optimal performance and reliability |
 
 The strategy is selected when initializing the Router:
 
 ```python
-router = Router(strategy="round-robin")  # or "random" or "first-available"
+router = Router(strategy="round-robin")  # or "random", "first-available", or "best-available"
 ```
+
+### Best-Available Strategy
+
+The `best-available` strategy uses provider health status and latency metrics to intelligently route requests:
+
+- **Health Status**: Providers are categorized as `healthy`, `degraded`, or `unhealthy` based on error rates and latency patterns
+- **Latency Optimization**: Among providers with the same health status, selects the one with the lowest rolling average latency
+- **Automatic Adaptation**: Metrics are updated in real-time, so routing decisions adapt as provider performance changes
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, GigaChatProvider, YandexGPTProvider
+
+async def main():
+    # Initialize router with best-available strategy
+    router = Router(strategy="best-available")
+    
+    # Add multiple providers
+    router.add_provider(GigaChatProvider(ProviderConfig(
+        name="gigachat", api_key="key1", model="GigaChat"
+    )))
+    router.add_provider(YandexGPTProvider(ProviderConfig(
+        name="yandexgpt", api_key="key2", folder_id="folder1", model="yandexgpt/latest"
+    )))
+    
+    # Router will automatically select the healthiest and fastest provider
+    response = await router.route("What is Python?")
+    print(response)
+
+asyncio.run(main())
+```
+
+The Router tracks performance metrics for each provider (latency, success rate, error rate) and uses this data to make intelligent routing decisions. Providers with high error rates or degraded latency are automatically deprioritized.
 
 ## Run the Demo
 
@@ -258,7 +303,7 @@ python examples/routing_demo.py
 **No API keys required** — uses MockProvider for demonstration.
 
 The demo showcases:
-- All three routing strategies (round-robin, random, first-available)
+- All four routing strategies (round-robin, random, first-available, best-available)
 - Automatic fallback mechanism when providers fail
 - Error handling when all providers are unavailable
 
@@ -285,7 +330,8 @@ See our [GitHub Issues](https://github.com/MikhailMalorod/Multi-LLM-Orchestrator
 - ✅ Core architecture with Router and BaseProvider
 - ✅ MockProvider for testing
 - ✅ GigaChatProvider with OAuth2 authentication
-- ✅ Three routing strategies (round-robin, random, first-available)
+- ✅ Four routing strategies (round-robin, random, first-available, best-available)
+- ✅ Provider-level metrics tracking (latency, success/failure, health status)
 - ✅ Automatic fallback mechanism
 - ✅ Example demonstrations
 
@@ -396,6 +442,59 @@ for chunk in llm._stream("What is Python?"):
 ### Streaming Examples
 
 See [streaming_demo.py](examples/streaming_demo.py) and [langchain_streaming_demo.py](examples/langchain_streaming_demo.py) for complete examples.
+
+## Provider Metrics & Monitoring
+
+Multi-LLM Orchestrator automatically tracks performance metrics for each provider, enabling intelligent routing and monitoring.
+
+### Accessing Metrics
+
+The Router collects aggregated metrics for each provider, including:
+- Request counts (total, successful, failed)
+- Average latency (for successful requests)
+- Rolling average latency (last 100 requests)
+- Error rate (recent errors)
+- Health status (`healthy`, `degraded`, or `unhealthy`)
+
+```python
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, MockProvider
+
+router = Router(strategy="best-available")
+router.add_provider(MockProvider(ProviderConfig(name="provider1", model="mock-normal")))
+
+# Make some requests
+await router.route("Test 1")
+await router.route("Test 2")
+
+# Access metrics
+metrics = router.get_metrics()
+for provider_name, provider_metrics in metrics.items():
+    print(f"{provider_name}:")
+    print(f"  Health: {provider_metrics.health_status}")
+    print(f"  Success rate: {provider_metrics.success_rate:.2%}")
+    print(f"  Avg latency: {provider_metrics.avg_latency_ms:.1f}ms")
+    print(f"  Rolling avg latency: {provider_metrics.rolling_avg_latency_ms:.1f}ms" if provider_metrics.rolling_avg_latency_ms else "  Rolling avg latency: N/A")
+```
+
+### Health Status
+
+Provider health status is determined automatically based on:
+- **Error Rate**: High error rates (>30% degraded, >60% unhealthy) indicate provider issues
+- **Latency Degradation**: If rolling average latency is significantly higher than overall average, provider is marked as degraded
+- **Insufficient Data**: New providers with few requests are optimistically marked as `healthy`
+
+The `best-available` routing strategy uses health status to prioritize providers, always preferring `healthy` over `degraded` over `unhealthy`.
+
+### Structured Logging
+
+Router automatically logs request events with structured fields:
+- `llm_request_completed` (info level) for successful requests
+- `llm_request_failed` (warning level) for failed requests
+
+Each log entry includes: `provider`, `model`, `latency_ms`, `streaming`, `success`, and `error_type` (for failures).
+
+**Note:** Token-based metrics (token count, tokens/s, cost) are not yet implemented. This is planned for future releases (v0.7.0+).
 
 ## Documentation
 

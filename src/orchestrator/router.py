@@ -2,12 +2,15 @@
 
 import logging
 import random
+import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
+from .metrics import ProviderMetrics
 from .providers.base import BaseProvider, GenerationParams, ProviderError
 
 # Valid routing strategies
-VALID_STRATEGIES = ["round-robin", "random", "first-available"]
+VALID_STRATEGIES = ["round-robin", "random", "first-available", "best-available"]
 
 
 class Router:
@@ -16,11 +19,17 @@ class Router:
     The Router handles intelligent routing of requests to appropriate
     LLM providers based on configurable routing strategies. It supports
     multiple routing strategies including round-robin, random selection,
-    and first-available provider selection with automatic fallback.
+    first-available provider selection, and best-available (metrics-based)
+    selection with automatic fallback.
+
+    The Router tracks performance metrics for each provider, including
+    request counts, latency, error rates, and health status, which can
+    be used for intelligent routing decisions.
 
     Attributes:
         strategy: Routing strategy to use for provider selection
         providers: List of registered provider instances
+        metrics: Dictionary mapping provider names to their metrics (internal)
         _current_index: Current index for round-robin strategy (internal)
         logger: Logger instance for this router
 
@@ -55,6 +64,7 @@ class Router:
                 - "round-robin": Select providers in a cyclic order
                 - "random": Select a random provider from available providers
                 - "first-available": Select the first healthy provider
+                - "best-available": Select the healthiest provider with lowest latency
 
         Raises:
             ValueError: If the provided strategy is not valid
@@ -80,6 +90,7 @@ class Router:
 
         self.strategy = strategy
         self.providers: list[BaseProvider] = []
+        self.metrics: dict[str, ProviderMetrics] = {}
         self._current_index: int = 0
         self.logger = logging.getLogger("orchestrator.router")
 
@@ -90,10 +101,14 @@ class Router:
 
         The provider will be added to the list of available providers
         and can be selected by the router based on the configured strategy.
+        Metrics tracking is automatically initialized for the provider.
 
         Args:
             provider: Provider instance to add. Must be an instance of
                     BaseProvider or its subclass.
+
+        Raises:
+            ValueError: If a provider with the same name already exists
 
         Example:
             ```python
@@ -105,8 +120,60 @@ class Router:
             router.add_provider(provider)
             ```
         """
+        # Check for duplicate provider names
+        provider_name = provider.config.name
+        if provider_name in self.metrics:
+            raise ValueError(
+                f"Provider with name '{provider_name}' already exists"
+            )
+        # Check if name exists in providers list
+        for existing_provider in self.providers:
+            if existing_provider.config.name == provider_name:
+                raise ValueError(
+                    f"Provider with name '{provider_name}' already exists"
+                )
+
         self.providers.append(provider)
-        self.logger.info(f"Added provider: {provider.config.name}")
+        # Initialize metrics for the new provider
+        self.metrics[provider_name] = ProviderMetrics()
+        self.logger.info(f"Added provider: {provider_name}")
+
+    def _log_request_event(
+        self,
+        provider_name: str,
+        model: str | None,
+        latency_ms: float,
+        streaming: bool,
+        success: bool,
+        error_type: str | None = None,
+    ) -> None:
+        """Log a request event with structured fields.
+
+        This helper method provides consistent logging format for request
+        completion and failure events across route() and route_stream().
+
+        Args:
+            provider_name: Name of the provider that handled the request
+            model: Model name used (if available)
+            latency_ms: Request latency in milliseconds
+            streaming: Whether this was a streaming request
+            success: Whether the request was successful
+            error_type: Type of error (if request failed)
+        """
+        extra = {
+            "provider": provider_name,
+            "model": model,
+            "latency_ms": latency_ms,
+            "streaming": streaming,
+            "success": success,
+        }
+        if error_type:
+            extra["error_type"] = error_type
+
+        if success:
+            self.logger.info("llm_request_completed", extra=extra)
+        else:
+            self.logger.warning("llm_request_failed", extra=extra)
 
     async def route(
         self,
@@ -164,14 +231,49 @@ class Router:
             index = (selected_index + i) % len(self.providers)
             provider = self.providers[index]
 
+            # Measure time for metrics
+            start_time = time.perf_counter()
+
             try:
                 self.logger.info(f"Trying provider: {provider.config.name}")
                 result = await provider.generate(prompt, params)
+
+                # Calculate latency and update metrics
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                metrics = self.metrics[provider.config.name]
+                metrics.record_success(latency_ms)
+
+                # Log success event
+                self._log_request_event(
+                    provider_name=provider.config.name,
+                    model=provider.config.model,
+                    latency_ms=latency_ms,
+                    streaming=False,
+                    success=True,
+                )
+
                 self.logger.info(
                     f"Success with provider: {provider.config.name}"
                 )
                 return result
             except Exception as e:
+                # Calculate latency even for failed requests
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                metrics = self.metrics[provider.config.name]
+                metrics.record_error(
+                    latency_ms, datetime.now(UTC)
+                )
+
+                # Log failure event
+                self._log_request_event(
+                    provider_name=provider.config.name,
+                    model=provider.config.model,
+                    latency_ms=latency_ms,
+                    streaming=False,
+                    success=False,
+                    error_type=type(e).__name__,
+                )
+
                 self.logger.warning(
                     f"Provider {provider.config.name} failed: {e}, trying next"
                 )
@@ -243,9 +345,121 @@ class Router:
                 )
             return selected
 
+        elif self.strategy == "best-available":
+            # Best-available: select healthiest provider with lowest latency
+            return self._select_best_available_provider()
+
         else:
             # This should never happen due to validation in __init__
             raise ValueError(f"Unknown strategy: {self.strategy}")
+
+    def _effective_latency_for_sort(self, metrics: ProviderMetrics) -> float:
+        """Calculate effective latency for sorting providers.
+
+        Uses rolling_avg_latency_ms if available, falls back to avg_latency_ms,
+        or returns infinity if no latency data is available.
+
+        Args:
+            metrics: ProviderMetrics instance to calculate effective latency for
+
+        Returns:
+            Effective latency in milliseconds, or float("inf") if no data
+        """
+        if metrics.rolling_avg_latency_ms is not None:
+            return metrics.rolling_avg_latency_ms
+        if metrics.avg_latency_ms > 0:
+            return metrics.avg_latency_ms
+        return float("inf")
+
+    def _select_best_available_provider(self) -> BaseProvider:
+        """Select the best available provider based on health and latency.
+
+        Groups providers by health status (healthy > degraded > unhealthy),
+        then selects the provider with lowest effective latency within the
+        best available group.
+
+        Returns:
+            Selected provider instance
+
+        Raises:
+            ProviderError: If no providers are available
+        """
+        if not self.providers:
+            raise ProviderError("No providers available for selection")
+
+        # Group providers by health status
+        healthy_providers: list[BaseProvider] = []
+        degraded_providers: list[BaseProvider] = []
+        unhealthy_providers: list[BaseProvider] = []
+
+        for provider in self.providers:
+            # Get or create metrics for provider
+            metrics = self.metrics.get(provider.config.name)
+            if metrics is None:
+                # Edge case: provider added but metrics not initialized
+                metrics = ProviderMetrics()
+                self.metrics[provider.config.name] = metrics
+
+            status = metrics.health_status
+
+            if status == "healthy":
+                healthy_providers.append(provider)
+            elif status == "degraded":
+                degraded_providers.append(provider)
+            else:  # unhealthy
+                unhealthy_providers.append(provider)
+
+        # Select group by priority: healthy > degraded > unhealthy
+        selected_group: list[BaseProvider]
+        if healthy_providers:
+            selected_group = healthy_providers
+        elif degraded_providers:
+            selected_group = degraded_providers
+        else:
+            # Even if all unhealthy, we still select among them
+            selected_group = unhealthy_providers
+
+        # Sort by effective latency (ascending)
+        selected_group.sort(
+            key=lambda p: self._effective_latency_for_sort(
+                self.metrics[p.config.name]
+            )
+        )
+
+        selected = selected_group[0]
+        metrics = self.metrics[selected.config.name]
+        effective_latency = self._effective_latency_for_sort(metrics)
+
+        self.logger.info(
+            f"Selected provider: {selected.config.name} "
+            f"(strategy: best-available, health: {metrics.health_status}, "
+            f"latency: {effective_latency:.1f}ms)"
+        )
+
+        return selected
+
+    def get_metrics(self) -> dict[str, ProviderMetrics]:
+        """Return a shallow copy of provider metrics.
+
+        Returns a snapshot of all provider metrics keyed by provider name.
+        The returned dictionary is a shallow copy, so modifications to
+        the dictionary itself won't affect the router's internal metrics,
+        but modifications to ProviderMetrics objects will.
+
+        Returns:
+            Dictionary mapping provider names to their metrics.
+            Returns empty dict if no providers are registered.
+
+        Example:
+            ```python
+            metrics = router.get_metrics()
+            for provider_name, provider_metrics in metrics.items():
+                print(f"{provider_name}: {provider_metrics.health_status}")
+                print(f"  Success rate: {provider_metrics.success_rate:.2%}")
+                print(f"  Avg latency: {provider_metrics.avg_latency_ms:.1f}ms")
+            ```
+        """
+        return dict(self.metrics)
 
     async def route_stream(
         self,
@@ -317,6 +531,9 @@ class Router:
             index = (selected_index + i) % len(self.providers)
             provider = self.providers[index]
 
+            # Measure time for metrics
+            start_time = time.perf_counter()
+
             try:
                 self.logger.info(f"Trying provider: {provider.config.name}")
 
@@ -335,12 +552,43 @@ class Router:
                         yield chunk
 
                     # If we get here, streaming completed successfully
+                    # Calculate latency and update metrics
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    metrics = self.metrics[provider.config.name]
+                    metrics.record_success(latency_ms)
+
+                    # Log success event
+                    self._log_request_event(
+                        provider_name=provider.config.name,
+                        model=provider.config.model,
+                        latency_ms=latency_ms,
+                        streaming=True,
+                        success=True,
+                    )
+
                     self.logger.info(
                         f"Success with provider: {provider.config.name}"
                     )
                     return
 
                 except Exception as stream_error:
+                    # Calculate latency even for failed requests
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    metrics = self.metrics[provider.config.name]
+                    metrics.record_error(
+                        latency_ms, datetime.now(UTC)
+                    )
+
+                    # Log failure event
+                    self._log_request_event(
+                        provider_name=provider.config.name,
+                        model=provider.config.model,
+                        latency_ms=latency_ms,
+                        streaming=True,
+                        success=False,
+                        error_type=type(stream_error).__name__,
+                    )
+
                     # If error occurred after first chunk, we cannot fallback
                     # Raise immediately to prevent mixing chunks from different providers
                     if first_chunk_sent:

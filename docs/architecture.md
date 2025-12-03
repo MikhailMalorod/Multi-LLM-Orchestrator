@@ -9,9 +9,10 @@ This document provides an overview of the Multi-LLM Orchestrator architecture, i
 The `Router` is the central component that manages provider selection and request routing. It implements intelligent routing strategies and automatic fallback mechanisms.
 
 **Key Features:**
-- Multiple routing strategies (round-robin, random, first-available)
+- Multiple routing strategies (round-robin, random, first-available, best-available)
 - Automatic fallback when providers fail
 - Provider health checking
+- Performance metrics tracking (latency, success/failure rates, health status)
 - Request logging and error handling
 
 **Location:** `src/orchestrator/router.py`
@@ -98,6 +99,7 @@ Here's how a request flows through the system:
    - **round-robin**: Cycles through providers in order
    - **random**: Selects a random provider
    - **first-available**: Selects the first healthy provider (via health_check)
+   - **best-available**: Selects the healthiest provider with lowest latency (based on metrics)
 
 3. **Request Execution**
    - Router calls `provider.generate(prompt, params)`
@@ -144,6 +146,21 @@ Selects the first healthy provider based on health checks. Best for high availab
 router = Router(strategy="first-available")
 # Checks providers in order, selects first healthy one
 # Falls back to trying all providers if none are healthy
+```
+
+### best-available
+
+Selects the healthiest provider with the lowest latency based on real-time performance metrics. Best for production environments requiring optimal performance and reliability.
+
+**Algorithm:**
+1. Groups providers by health status (priority: `healthy` > `degraded` > `unhealthy`)
+2. Within the selected group, sorts by effective latency (rolling average, falling back to average)
+3. Selects the provider with lowest latency
+
+```python
+router = Router(strategy="best-available")
+# Automatically selects the best performing provider
+# Adapts to changing provider performance in real-time
 ```
 
 ## Exception Hierarchy
@@ -198,6 +215,60 @@ All components use Python's `logging` module:
 - Router: `orchestrator.router`
 - Providers: `orchestrator.providers.{provider_name}`
 - Log level can be configured via environment variables
+
+Router logs structured request events:
+- `llm_request_completed` (info) for successful requests
+- `llm_request_failed` (warning) for failed requests
+
+Each log entry includes: `provider`, `model`, `latency_ms`, `streaming`, `success`, and `error_type` (for failures).
+
+## Observability & Metrics
+
+### ProviderMetrics
+
+The `ProviderMetrics` class tracks performance metrics for each provider instance, enabling intelligent routing and monitoring.
+
+**Key Metrics:**
+- **Request Counts**: `total_requests`, `successful_requests`, `failed_requests`
+- **Latency**: `avg_latency_ms` (average for successful requests), `rolling_avg_latency_ms` (sliding window of last 100 requests)
+- **Error Rate**: `recent_error_rate` (errors in last 60 seconds)
+- **Health Status**: `health_status` (`healthy`, `degraded`, or `unhealthy`)
+
+**Location:** `src/orchestrator/metrics.py`
+
+**Health Status Logic:**
+1. If insufficient data (`total_requests < 5`): Returns `healthy` (optimistic default)
+2. If `recent_error_rate >= 0.6`: Returns `unhealthy`
+3. If `recent_error_rate >= 0.3`: Returns `degraded`
+4. If `rolling_avg_latency_ms > 2.0 * avg_latency_ms` (and enough data): Returns `degraded`
+5. Otherwise: Returns `healthy`
+
+### Metrics Integration in Router
+
+Router automatically maintains a `ProviderMetrics` instance for each registered provider, keyed by `provider.config.name`:
+
+- **Initialization**: Metrics are created when a provider is added via `add_provider()`
+- **Updates**: Metrics are updated after each request (success or failure) in both `route()` and `route_stream()`
+- **Access**: Use `router.get_metrics()` to retrieve a snapshot of all provider metrics
+
+**Example:**
+```python
+router = Router(strategy="best-available")
+router.add_provider(provider1)  # Metrics automatically initialized
+router.add_provider(provider2)
+
+# Make requests - metrics are updated automatically
+await router.route("test")
+
+# Access metrics
+metrics = router.get_metrics()
+provider1_metrics = metrics["provider1"]
+print(provider1_metrics.health_status)  # "healthy", "degraded", or "unhealthy"
+```
+
+### Token-Based Metrics
+
+**Note:** Token-aware metrics (token count, tokens/s, cost calculation) are **not yet implemented** in v0.6.0. This is intentionally deferred to future releases (v0.7.0+) to focus on core latency and health tracking first.
 
 ## See Also
 
