@@ -390,57 +390,6 @@ The `MultiLLMOrchestrator` class implements LangChain's `BaseLLM` interface, sup
 
 ## Prometheus Integration
 
-Monitor your LLM infrastructure with Prometheus metrics:
-
-```python
-import asyncio
-from orchestrator import Router
-from orchestrator.providers import GigaChatProvider, ProviderConfig
-
-async def main():
-    router = Router(strategy="best-available")
-    
-    # Add providers
-    config = ProviderConfig(
-        name="gigachat",
-        api_key="your_api_key",
-        model="GigaChat-Pro"
-    )
-    router.add_provider(GigaChatProvider(config))
-    
-    # Start Prometheus metrics server
-    await router.start_metrics_server(port=9090)
-    
-    # Make requests
-    response = await router.route("Hello!")
-    
-    # Access metrics programmatically
-    metrics = router.get_metrics()
-    for provider_name, provider_metrics in metrics.items():
-        print(f"{provider_name}:")
-        print(f"  Total requests: {provider_metrics.total_requests}")
-        print(f"  Total tokens: {provider_metrics.total_tokens}")
-        print(f"  Total cost: {provider_metrics.total_cost:.2f} RUB")
-    
-    # Metrics available at http://localhost:9090/metrics
-    
-    # Stop server when done
-    await router.stop_metrics_server()
-
-asyncio.run(main())
-```
-
-**Available Metrics**:
-- `llm_requests_total` — Total requests (success/failure)
-- `llm_request_latency_seconds` — Request latency histogram
-- `llm_tokens_total` — Total tokens processed (prompt/completion)
-- `llm_cost_total` — Total cost in RUB
-- `llm_provider_health` — Provider health status (1=healthy, 0.5=degraded, 0=unhealthy)
-
-See [docs/observability.md](docs/observability.md) for detailed guide.
-
-## Prometheus Integration
-
 Monitor your LLM infrastructure with Prometheus metrics and token-aware cost tracking:
 
 ```python
