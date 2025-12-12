@@ -316,3 +316,102 @@ class TestProviderMetricsHealthStatus:
         # Should still be healthy (error rate below threshold)
         assert metrics.health_status == "healthy"
 
+
+class TestProviderMetricsTokenTracking:
+    """Test token tracking and cost estimation in ProviderMetrics (v0.7.0)."""
+
+    def test_initial_token_values(self) -> None:
+        """Test that token fields initialize to 0."""
+        metrics = ProviderMetrics()
+        assert metrics.total_prompt_tokens == 0
+        assert metrics.total_completion_tokens == 0
+        assert metrics.total_tokens == 0  # computed property
+        assert metrics.total_cost == 0.0
+
+    def test_record_success_with_tokens(self) -> None:
+        """Test record_success with token parameters."""
+        metrics = ProviderMetrics()
+        metrics.record_success(
+            latency_ms=100.0,
+            prompt_tokens=50,
+            completion_tokens=30,
+            cost=0.16,
+        )
+
+        assert metrics.total_prompt_tokens == 50
+        assert metrics.total_completion_tokens == 30
+        assert metrics.total_tokens == 80
+        assert metrics.total_cost == pytest.approx(0.16)
+
+    def test_record_success_backward_compatible(self) -> None:
+        """Test that old code without tokens still works (backward compatibility)."""
+        metrics = ProviderMetrics()
+        metrics.record_success(100.0)  # Old signature (v0.6.0 style)
+
+        assert metrics.total_requests == 1
+        assert metrics.successful_requests == 1
+        assert metrics.total_prompt_tokens == 0  # Defaults to 0
+        assert metrics.total_completion_tokens == 0
+        assert metrics.total_tokens == 0
+        assert metrics.total_cost == 0.0
+
+    def test_multiple_requests_accumulate_tokens(self) -> None:
+        """Test that multiple requests accumulate tokens correctly."""
+        metrics = ProviderMetrics()
+
+        metrics.record_success(100.0, prompt_tokens=10, completion_tokens=20, cost=0.05)
+        metrics.record_success(150.0, prompt_tokens=15, completion_tokens=25, cost=0.08)
+
+        assert metrics.total_prompt_tokens == 25
+        assert metrics.total_completion_tokens == 45
+        assert metrics.total_tokens == 70
+        assert metrics.total_cost == pytest.approx(0.13)
+
+    def test_record_error_does_not_affect_tokens(self) -> None:
+        """Test that failed requests do not affect token counts."""
+        metrics = ProviderMetrics()
+        now = datetime.now(timezone.utc)
+
+        # Successful request with tokens
+        metrics.record_success(100.0, prompt_tokens=50, completion_tokens=30, cost=0.16)
+
+        # Failed request (no tokens recorded)
+        metrics.record_error(50.0, now)
+
+        # Token counts should remain unchanged
+        assert metrics.total_prompt_tokens == 50
+        assert metrics.total_completion_tokens == 30
+        assert metrics.total_tokens == 80
+        assert metrics.total_cost == pytest.approx(0.16)
+
+    def test_total_tokens_computed_property(self) -> None:
+        """Test that total_tokens is correctly computed."""
+        metrics = ProviderMetrics()
+
+        # Add tokens in multiple requests
+        metrics.record_success(100.0, prompt_tokens=100, completion_tokens=50)
+        assert metrics.total_tokens == 150
+
+        metrics.record_success(100.0, prompt_tokens=200, completion_tokens=100)
+        assert metrics.total_tokens == 450  # 100 + 50 + 200 + 100
+
+    def test_mixed_old_and_new_style_requests(self) -> None:
+        """Test that old-style and new-style requests can be mixed."""
+        metrics = ProviderMetrics()
+
+        # Old-style request (no tokens)
+        metrics.record_success(100.0)
+
+        # New-style request (with tokens)
+        metrics.record_success(150.0, prompt_tokens=50, completion_tokens=30, cost=0.16)
+
+        # Another old-style request
+        metrics.record_success(120.0)
+
+        # Verify counts
+        assert metrics.total_requests == 3
+        assert metrics.successful_requests == 3
+        assert metrics.total_prompt_tokens == 50
+        assert metrics.total_completion_tokens == 30
+        assert metrics.total_tokens == 80
+        assert metrics.total_cost == pytest.approx(0.16)

@@ -1,5 +1,6 @@
 """LLM Router module for managing provider selection and request routing."""
 
+import asyncio
 import logging
 import random
 import time
@@ -7,7 +8,10 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from .metrics import ProviderMetrics
+from .pricing import calculate_cost
+from .prometheus_exporter import PrometheusExporter
 from .providers.base import BaseProvider, GenerationParams, ProviderError
+from .tokenization import count_tokens
 
 # Valid routing strategies
 VALID_STRATEGIES = ["round-robin", "random", "first-available", "best-available"]
@@ -94,6 +98,10 @@ class Router:
         self._current_index: int = 0
         self.logger = logging.getLogger("orchestrator.router")
 
+        # Prometheus exporter (v0.7.0+, not started by default)
+        self._prometheus_exporter: PrometheusExporter | None = None
+        self._metrics_update_task: asyncio.Task[None] | None = None
+
         self.logger.info(f"Router initialized with strategy: {strategy}")
 
     def add_provider(self, provider: BaseProvider) -> None:
@@ -146,6 +154,10 @@ class Router:
         streaming: bool,
         success: bool,
         error_type: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        cost: float | None = None,
     ) -> None:
         """Log a request event with structured fields.
 
@@ -159,6 +171,10 @@ class Router:
             streaming: Whether this was a streaming request
             success: Whether the request was successful
             error_type: Type of error (if request failed)
+            prompt_tokens: Number of prompt tokens (optional, v0.7.0+)
+            completion_tokens: Number of completion tokens (optional, v0.7.0+)
+            total_tokens: Total tokens (optional, v0.7.0+)
+            cost: Request cost in RUB (optional, v0.7.0+)
         """
         extra = {
             "provider": provider_name,
@@ -169,6 +185,16 @@ class Router:
         }
         if error_type:
             extra["error_type"] = error_type
+
+        # Add token and cost info (v0.7.0+) if available
+        if prompt_tokens is not None:
+            extra["prompt_tokens"] = prompt_tokens
+        if completion_tokens is not None:
+            extra["completion_tokens"] = completion_tokens
+        if total_tokens is not None:
+            extra["total_tokens"] = total_tokens
+        if cost is not None:
+            extra["cost_rub"] = round(cost, 2)  # Round to 2 decimals for logs
 
         if success:
             self.logger.info("llm_request_completed", extra=extra)
@@ -238,18 +264,41 @@ class Router:
                 self.logger.info(f"Trying provider: {provider.config.name}")
                 result = await provider.generate(prompt, params)
 
-                # Calculate latency and update metrics
+                # Calculate latency
                 latency_ms = (time.perf_counter() - start_time) * 1000
-                metrics = self.metrics[provider.config.name]
-                metrics.record_success(latency_ms)
 
-                # Log success event
+                # Count tokens (v0.7.0+)
+                prompt_tokens = count_tokens(prompt)
+                completion_tokens = count_tokens(result)
+                total_tokens = prompt_tokens + completion_tokens
+
+                # Calculate cost (v0.7.0+)
+                cost = calculate_cost(
+                    provider_name=provider.config.name,
+                    model=provider.config.model,
+                    total_tokens=total_tokens,
+                )
+
+                # Update metrics with tokens and cost
+                metrics = self.metrics[provider.config.name]
+                metrics.record_success(
+                    latency_ms=latency_ms,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost=cost,
+                )
+
+                # Log success event with token info
                 self._log_request_event(
                     provider_name=provider.config.name,
                     model=provider.config.model,
                     latency_ms=latency_ms,
                     streaming=False,
                     success=True,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    cost=cost,
                 )
 
                 self.logger.info(
@@ -541,6 +590,9 @@ class Router:
                 # Once the first chunk is sent, we cannot fallback to another provider
                 first_chunk_sent = False
 
+                # Accumulate chunks for token counting (v0.7.0+)
+                accumulated_chunks: list[str] = []
+
                 try:
                     # Stream chunks from the provider
                     async for chunk in provider.generate_stream(prompt, params):
@@ -548,22 +600,51 @@ class Router:
                         if not first_chunk_sent:
                             first_chunk_sent = True
 
+                        # Accumulate chunks for token counting
+                        accumulated_chunks.append(chunk)
+
                         # Yield the chunk to the caller
                         yield chunk
 
                     # If we get here, streaming completed successfully
-                    # Calculate latency and update metrics
+                    # Calculate latency
                     latency_ms = (time.perf_counter() - start_time) * 1000
-                    metrics = self.metrics[provider.config.name]
-                    metrics.record_success(latency_ms)
 
-                    # Log success event
+                    # Reconstruct full response for tokenization (v0.7.0+)
+                    full_response = "".join(accumulated_chunks)
+
+                    # Count tokens (v0.7.0+)
+                    prompt_tokens = count_tokens(prompt)
+                    completion_tokens = count_tokens(full_response)
+                    total_tokens = prompt_tokens + completion_tokens
+
+                    # Calculate cost (v0.7.0+)
+                    cost = calculate_cost(
+                        provider_name=provider.config.name,
+                        model=provider.config.model,
+                        total_tokens=total_tokens,
+                    )
+
+                    # Update metrics with tokens and cost
+                    metrics = self.metrics[provider.config.name]
+                    metrics.record_success(
+                        latency_ms=latency_ms,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cost=cost,
+                    )
+
+                    # Log success event with token info
                     self._log_request_event(
                         provider_name=provider.config.name,
                         model=provider.config.model,
                         latency_ms=latency_ms,
                         streaming=True,
                         success=True,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        cost=cost,
                     )
 
                     self.logger.info(
@@ -614,3 +695,112 @@ class Router:
         if last_error is None:
             raise ProviderError("All providers failed")
         raise last_error
+
+    async def start_metrics_server(self, port: int = 9090) -> None:
+        """Start Prometheus metrics HTTP server.
+
+        This method starts an HTTP server that exposes Prometheus metrics
+        at /metrics endpoint. The server runs in the background and updates
+        metrics every 1 second.
+
+        Args:
+            port: HTTP server port (default: 9090).
+                 Choose different port if 9090 is already in use.
+
+        Raises:
+            OSError: If port is already in use
+            RuntimeError: If metrics server is already running
+
+        Example:
+            ```python
+            router = Router(strategy="best-available")
+            router.add_provider(provider)
+
+            # Start metrics server
+            await router.start_metrics_server(port=9090)
+
+            # Make requests
+            response = await router.route("Hello!")
+
+            # Metrics available at http://localhost:9090/metrics
+            ```
+
+        Note:
+            The metrics server must be explicitly stopped using stop_metrics_server()
+            to ensure graceful shutdown.
+        """
+        if self._prometheus_exporter is not None:
+            raise RuntimeError(
+                "Metrics server is already running. "
+                "Call stop_metrics_server() first."
+            )
+
+        self._prometheus_exporter = PrometheusExporter(port=port)
+        await self._prometheus_exporter.start()
+
+        # Start background task to update metrics periodically
+        self._metrics_update_task = asyncio.create_task(
+            self._update_metrics_loop()
+        )
+
+        self.logger.info(
+            f"Metrics server started at http://0.0.0.0:{port}/metrics"
+        )
+
+    async def stop_metrics_server(self) -> None:
+        """Stop Prometheus metrics HTTP server gracefully.
+
+        This method stops the metrics server and cancels the background
+        metrics update task. Safe to call even if server is not running.
+
+        Example:
+            ```python
+            # Start server
+            await router.start_metrics_server()
+
+            # ... make requests ...
+
+            # Stop server
+            await router.stop_metrics_server()
+            ```
+
+        Note:
+            This method should be called during application shutdown to
+            ensure proper cleanup of resources.
+        """
+        # Cancel background update task
+        if self._metrics_update_task:
+            self._metrics_update_task.cancel()
+            try:
+                await self._metrics_update_task
+            except asyncio.CancelledError:
+                pass
+            self._metrics_update_task = None
+
+        # Stop HTTP server
+        if self._prometheus_exporter:
+            await self._prometheus_exporter.stop()
+            self._prometheus_exporter = None
+
+        self.logger.info("Metrics server stopped")
+
+    async def _update_metrics_loop(self) -> None:
+        """Background task to update Prometheus metrics every 1 second.
+
+        This is an internal method that runs in the background and periodically
+        updates Prometheus metrics from ProviderMetrics data.
+
+        Note:
+            This method runs indefinitely until cancelled. It should not be
+            called directly - use start_metrics_server() instead.
+        """
+        while True:
+            try:
+                if self._prometheus_exporter:
+                    self._prometheus_exporter.update_metrics(self.metrics)
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Error updating metrics: {e}")
+                await asyncio.sleep(1.0)

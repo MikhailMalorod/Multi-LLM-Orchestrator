@@ -5,6 +5,70 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2024-12-22
+
+### Added
+
+- **Token-aware Metrics**: Track token usage and costs for LLM requests
+  - Prompt token tracking via `total_prompt_tokens` field in `ProviderMetrics`
+  - Completion token tracking via `total_completion_tokens` field
+  - Total tokens computed property (`total_tokens = prompt + completion`)
+  - Cost estimation in RUB for GigaChat and YandexGPT providers
+  - `tiktoken` integration for accurate GPT-like token counting
+  - Fallback to word-based estimation (`word_count * 1.3`) when tiktoken fails
+  - Automatic token counting in both `route()` and `route_stream()` methods
+
+- **Prometheus Integration**: Export metrics for monitoring systems
+  - HTTP endpoint `/metrics` for Prometheus scraping (standard format)
+  - `Router.start_metrics_server(port)` method to start HTTP server
+  - `Router.stop_metrics_server()` method for graceful shutdown
+  - Background task updates metrics every 1 second
+  - Metrics exported:
+    - `llm_requests_total` — Request counters by provider and status
+    - `llm_request_latency_seconds` — Latency histogram with 8 buckets
+    - `llm_tokens_total` — Token counters by provider and type (prompt/completion)
+    - `llm_cost_total` — Total cost in RUB by provider
+    - `llm_provider_health` — Health status gauge (1=healthy, 0.5=degraded, 0=unhealthy)
+
+- **New Modules**:
+  - `orchestrator.tokenization` — Token counting utilities with tiktoken + fallback
+  - `orchestrator.pricing` — Cost estimation logic with pricing table
+  - `orchestrator.prometheus_exporter` — Prometheus HTTP server implementation
+
+- **Enhanced Structured Logging**: Token and cost info in request logs
+  - Log fields now include: `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_rub`
+  - Cost rounded to 2 decimals in logs for readability
+
+### Changed
+
+- `ProviderMetrics.record_success()` signature extended (backward compatible):
+  - New optional parameters: `prompt_tokens=0`, `completion_tokens=0`, `cost=0.0`
+  - Old code without token parameters still works (defaults to 0)
+- `Router._log_request_event()` signature extended with token/cost fields (backward compatible)
+
+### Documentation
+
+- New comprehensive guide: `docs/observability.md`
+  - Token tracking and cost estimation documentation
+  - Prometheus integration setup guide
+  - Example Prometheus queries for monitoring
+  - Grafana dashboard recommendations
+  - Troubleshooting section
+- README updated with "Prometheus Integration" section
+- Examples: `examples/prometheus_demo.py` — working Prometheus demo
+
+### Dependencies
+
+- Added: `prometheus-client` ^0.19.0
+- Added: `tiktoken` ^0.5.2
+- Added: `aiohttp` ^3.9.1
+
+### Notes
+
+- Backward compatible with v0.6.0 (no breaking changes)
+- Test coverage: 81% (decreased from 92% due to HTTP server testing complexity)
+- All 202 tests passing
+
 ## [0.6.0] - 2024-XX-XX
 
 ### Added

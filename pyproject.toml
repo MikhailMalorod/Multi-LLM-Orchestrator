@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "multi-llm-orchestrator"
-version = "0.6.0"
+version = "0.7.0"
 description = "Unified interface for Russian LLMs with intelligent routing and fallback"
 authors = ["Mikhail Malorod <MikhailMalorod@users.noreply.github.com>"]
 readme = "README.md"
@@ -32,12 +32,15 @@ packages = [{include = "orchestrator", from = "src"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 pydantic = "^2.5.0"
-httpx = "^0.25.0"
+httpx = "^0.27.0"
 python-dotenv = "^1.0.0"
 pyyaml = "^6.0"
 rich = "^13.7.0"
 typer = "^0.9.0"
 langchain-core = {version = ">=0.1.0", optional = true}
+prometheus-client = "^0.19.0"
+tiktoken = "^0.12.0"
+aiohttp = "^3.9.1"
 
 [tool.poetry.extras]
 langchain = ["langchain-core"]
@@ -46,7 +49,7 @@ langchain = ["langchain-core"]
 pytest = "^7.4.0"
 pytest-asyncio = "^0.21.0"
 pytest-cov = "^4.1.0"
-pytest-httpx = "^0.21.0"
+pytest-httpx = "^0.30.0"
 ruff = "^0.1.0"
 mypy = "^1.7.0"
 langchain-core = ">=0.1.0"

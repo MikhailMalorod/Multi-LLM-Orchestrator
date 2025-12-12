@@ -86,8 +86,19 @@ class ProviderMetrics:
         # Error timestamps (manually cleaned up in record_error)
         self._error_timestamps: deque[datetime] = deque()
 
-    def record_success(self, latency_ms: float) -> None:
-        """Record a successful request with its latency.
+        # Token tracking and cost estimation (v0.7.0)
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_cost: float = 0.0
+
+    def record_success(
+        self,
+        latency_ms: float,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        """Record a successful request with latency, tokens, and cost.
 
         This method updates counters and adds the latency measurement to
         the rolling window. Only successful requests contribute to
@@ -95,16 +106,33 @@ class ProviderMetrics:
 
         Args:
             latency_ms: Request latency in milliseconds
+            prompt_tokens: Number of tokens in prompt (default: 0, v0.7.0+)
+            completion_tokens: Number of tokens in completion (default: 0, v0.7.0+)
+            cost: Request cost in RUB (default: 0.0, v0.7.0+)
 
         Example:
             ```python
-            metrics.record_success(125.3)  # Record 125.3ms successful request
+            # Backward compatible (v0.6.0 style)
+            metrics.record_success(125.3)
+
+            # With token tracking (v0.7.0+)
+            metrics.record_success(
+                latency_ms=125.3,
+                prompt_tokens=50,
+                completion_tokens=30,
+                cost=0.16
+            )
             ```
         """
         self.total_requests += 1
         self.successful_requests += 1
         self.total_latency_ms += latency_ms
         self._latency_window.append(latency_ms)
+
+        # Update token and cost tracking (v0.7.0+)
+        self.total_prompt_tokens += prompt_tokens
+        self.total_completion_tokens += completion_tokens
+        self.total_cost += cost
 
     def record_error(
         self, latency_ms: float, error_timestamp: datetime
@@ -186,6 +214,21 @@ class ProviderMetrics:
         if len(self._latency_window) == 0:
             return None
         return sum(self._latency_window) / len(self._latency_window)
+
+    @property
+    def total_tokens(self) -> int:
+        """Calculate total tokens processed (prompt + completion).
+
+        Returns:
+            Sum of prompt and completion tokens
+
+        Example:
+            ```python
+            metrics.record_success(100.0, prompt_tokens=50, completion_tokens=30)
+            print(metrics.total_tokens)  # 80
+            ```
+        """
+        return self.total_prompt_tokens + self.total_completion_tokens
 
     @property
     def recent_error_rate(self) -> float:
