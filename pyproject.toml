@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "multi-llm-orchestrator"
-version = "0.7.1"
+version = "0.7.2"
 description = "Unified interface for Russian LLMs with intelligent routing and fallback"
 authors = ["Mikhail Malorod <MikhailMalorod@users.noreply.github.com>"]
 readme = "README.md"
