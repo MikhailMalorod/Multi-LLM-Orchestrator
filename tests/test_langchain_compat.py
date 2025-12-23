@@ -154,6 +154,27 @@ class TestMultiLLMOrchestratorCall:
         with pytest.raises(ValueError, match="at least one provider"):
             MultiLLMOrchestrator(router=router)
 
+    @pytest.mark.asyncio
+    async def test_call_from_async_context(
+        self, router_with_providers: Router
+    ) -> None:
+        """Test _call() works when called from async context (e.g., Telegram bot).
+        
+        Previously failed with: RuntimeError: asyncio.run() cannot be called 
+        from a running event loop.
+        
+        Verifies that the method uses isolated event loop and does not conflict
+        with existing async contexts like Telegram bot handlers or FastAPI endpoints.
+        """
+        llm = MultiLLMOrchestrator(router=router_with_providers)
+        
+        # Call synchronous method from async context (like in Telegram handlers)
+        response = llm._call("What is Python?", temperature=0.5, stop=["END"])
+        
+        assert isinstance(response, str)
+        assert len(response) > 0
+        assert response.startswith("Mock response to:")
+
 
 class TestMultiLLMOrchestratorACall:
     """Test asynchronous _acall() method."""
@@ -240,6 +261,39 @@ class TestMultiLLMOrchestratorACall:
         llm = MultiLLMOrchestrator(router=router)
         with pytest.raises(TimeoutError, match="Mock timeout simulation"):
             await llm._acall("test")
+
+
+class TestMultiLLMOrchestratorGenerate:
+    """Test synchronous _generate() method with batch processing."""
+
+    @pytest.mark.asyncio
+    async def test_generate_from_async_context(
+        self, router_with_providers: Router
+    ) -> None:
+        """Test _generate() works when called from async context with multiple prompts.
+        
+        Previously failed with: RuntimeError: asyncio.run() cannot be called 
+        from a running event loop.
+        
+        Verifies that batch processing uses isolated event loop for all prompts
+        and does not conflict with existing async contexts.
+        """
+        llm = MultiLLMOrchestrator(router=router_with_providers)
+        
+        # Call batch generation from async context
+        prompts = ["What is Python?", "What is JavaScript?", "What is Rust?"]
+        result = llm._generate(prompts, temperature=0.7)
+        
+        # Verify LLMResult structure
+        assert hasattr(result, "generations")
+        assert len(result.generations) == 3
+        
+        # Verify each generation
+        for generation_list in result.generations:
+            assert len(generation_list) == 1
+            assert hasattr(generation_list[0], "text")
+            assert isinstance(generation_list[0].text, str)
+            assert len(generation_list[0].text) > 0
 
 
 class TestMultiLLMOrchestratorImportError:

@@ -34,6 +34,7 @@ Example:
 """
 
 import asyncio
+import concurrent.futures
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -190,6 +191,12 @@ if LANGCHAIN_AVAILABLE:
             Returns:
                 LLMResult object containing generated text responses
 
+            Note:
+                This method creates a new event loop for execution, which is safe
+                for use in synchronous contexts (like LangChain's sync API) and
+                will not conflict with existing async contexts (e.g., Telegram bots, FastAPI).
+                For native async execution, use _acall() instead.
+
             Raises:
                 ProviderError: If no providers are registered or all providers fail
                 TimeoutError: If all providers timeout
@@ -199,13 +206,38 @@ if LANGCHAIN_AVAILABLE:
             """
             # Map parameters (uses defaults from GenerationParams for missing params)
             params = self._map_params(stop, **kwargs)
-            # Process each prompt
-            generations = []
-            for prompt in prompts:
-                # Call router.route() through asyncio.run() (creates isolated event loop)
-                text = asyncio.run(self.router.route(prompt, params=params))
-                generations.append([Generation(text=text)])
-            return LLMResult(generations=generations)
+            
+            # Check if there's a running event loop
+            try:
+                asyncio.get_running_loop()
+                # Running loop exists - use thread pool to run in isolated loop
+                def _run_batch():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        generations = []
+                        for prompt in prompts:
+                            text = loop.run_until_complete(self.router.route(prompt, params=params))
+                            generations.append([Generation(text=text)])
+                        return LLMResult(generations=generations)
+                    finally:
+                        loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_batch)
+                    return future.result()
+            except RuntimeError:
+                # No running loop - create isolated event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    generations = []
+                    for prompt in prompts:
+                        text = loop.run_until_complete(self.router.route(prompt, params=params))
+                        generations.append([Generation(text=text)])
+                    return LLMResult(generations=generations)
+                finally:
+                    loop.close()
 
         def _call(
             self, prompt: str, stop: list[str] | None = None, **kwargs: Any
@@ -214,7 +246,7 @@ if LANGCHAIN_AVAILABLE:
 
             This method is called by LangChain for synchronous text generation.
             It maps LangChain parameters to GenerationParams and calls the
-            Router's route method through asyncio.run().
+            Router's route method using an isolated event loop.
 
             Args:
                 prompt: Input text prompt to generate completion for
@@ -224,6 +256,12 @@ if LANGCHAIN_AVAILABLE:
             Returns:
                 Generated text response from the Router
 
+            Note:
+                This method creates a new event loop for execution, which is safe
+                for use in synchronous contexts (like LangChain's sync API) and
+                will not conflict with existing async contexts (e.g., Telegram bots, FastAPI).
+                For native async execution, use _acall() instead.
+
             Raises:
                 ProviderError: If no providers are registered or all providers fail
                 TimeoutError: If all providers timeout
@@ -233,8 +271,25 @@ if LANGCHAIN_AVAILABLE:
             """
             # Map parameters (uses defaults from GenerationParams for missing params)
             params = self._map_params(stop, **kwargs)
-            # Call router.route() through asyncio.run() (creates isolated event loop)
-            return asyncio.run(self.router.route(prompt, params=params))
+            
+            # Check if there's a running event loop
+            try:
+                asyncio.get_running_loop()
+                # Running loop exists - use thread pool to run in isolated loop
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run, 
+                        self.router.route(prompt, params=params)
+                    )
+                    return future.result()
+            except RuntimeError:
+                # No running loop - create isolated event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(self.router.route(prompt, params=params))
+                finally:
+                    loop.close()
 
         async def _acall(
             self, prompt: str, stop: list[str] | None = None, **kwargs: Any
@@ -352,7 +407,6 @@ if LANGCHAIN_AVAILABLE:
             params = self._map_params(stop, **kwargs)
 
             # Create a dedicated event loop for streaming
-            # This is consistent with _call() and _generate() which use asyncio.run()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
