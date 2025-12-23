@@ -47,6 +47,49 @@ PRICING: dict[str, dict[str, float]] = {
 }
 
 
+def _find_provider_prefix(provider_name: str, known_providers: list[str]) -> str | None:
+    """Find matching provider using longest-prefix matching.
+
+    Matching logic:
+    1. Exact match: "gigachat" → "gigachat" ✅
+    2. Longest prefix: "gigachat-pro-custom" → "gigachat-pro" ✅
+    3. Fallback: "gigachat-dev" → "gigachat" ✅
+    4. No match: "mockery" → None ❌ (doesn't match "mock")
+
+    Args:
+        provider_name: Provider name to match (case-insensitive)
+        known_providers: List of known provider names from PRICING.keys()
+
+    Returns:
+        Matched provider name or None if no match found.
+
+    Example:
+        >>> _find_provider_prefix("mock-1", ["mock", "gigachat"])
+        "mock"
+
+        >>> _find_provider_prefix("gigachat-pro-custom", ["gigachat", "gigachat-pro"])
+        "gigachat-pro"  # Longest match
+
+        >>> _find_provider_prefix("mockery", ["mock"])
+        None  # "mockery" doesn't start with "mock-"
+    """
+    provider_key = provider_name.lower()
+
+    # 1. Exact match
+    if provider_key in known_providers:
+        return provider_key
+
+    # 2. Longest prefix match (sort by length DESC to try longest first)
+    sorted_providers = sorted(known_providers, key=len, reverse=True)
+    for known in sorted_providers:
+        # Match if provider_name starts with known + "-"
+        # e.g., "gigachat-pro-custom" starts with "gigachat-pro-"
+        if provider_key.startswith(known + "-"):
+            return known
+
+    return None  # Unknown provider
+
+
 def calculate_cost(
     provider_name: str, model: str | None, total_tokens: int
 ) -> float:
@@ -94,16 +137,14 @@ def calculate_cost(
     # Normalize provider name to lowercase for lookup
     provider_key = provider_name.lower()
 
-    # Get provider pricing config
+    # Get provider pricing config (try exact match first)
     provider_pricing = PRICING.get(provider_key)
 
-    # If not found directly, check if it's a variant (e.g., "mock-1" → "mock")
+    # If not found directly, try prefix matching (e.g., "mock-1" → "mock")
     if not provider_pricing:
-        # Try to match by prefix (e.g., "mock-1" → "mock", "gigachat-dev" → "gigachat")
-        for known_provider in PRICING.keys():
-            if provider_key.startswith(known_provider):
-                provider_pricing = PRICING[known_provider]
-                break
+        matched_provider = _find_provider_prefix(provider_key, list(PRICING.keys()))
+        if matched_provider:
+            provider_pricing = PRICING[matched_provider]
 
     if not provider_pricing:
         logger.warning(
@@ -130,8 +171,10 @@ def calculate_cost(
 def get_price_per_1k(provider_name: str, model: str | None) -> float:
     """Get price per 1000 tokens for a provider/model combination.
 
-    This is a convenience function to retrieve pricing without calculating
-    cost for a specific token count.
+    This function now supports prefix matching for provider variants:
+    - "mock-1" → "mock"
+    - "gigachat-pro-custom" → "gigachat-pro" (longest match)
+    - "gigachat-dev" → "gigachat"
 
     Args:
         provider_name: Provider name (case-insensitive)
@@ -157,7 +200,23 @@ def get_price_per_1k(provider_name: str, model: str | None) -> float:
         ```
     """
     provider_key = provider_name.lower()
-    provider_pricing = PRICING.get(provider_key, {})
+
+    # Try direct lookup first
+    provider_pricing = PRICING.get(provider_key)
+
+    # If not found, try prefix matching
+    if not provider_pricing:
+        matched_provider = _find_provider_prefix(provider_key, list(PRICING.keys()))
+        if matched_provider:
+            provider_pricing = PRICING[matched_provider]
+        else:
+            # Unknown provider
+            logger.warning(
+                f"Unknown provider '{provider_name}', assuming zero cost. "
+                f"Available providers: {list(PRICING.keys())}"
+            )
+            return 0.0
+
     return provider_pricing.get(
         model or "default", provider_pricing.get("default", 0.0)
     )

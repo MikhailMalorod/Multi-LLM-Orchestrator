@@ -7,8 +7,11 @@ This module tests cost calculation functionality including:
 - Free providers (Ollama, Mock)
 """
 
+import logging
+
 import pytest
-from orchestrator.pricing import calculate_cost, get_price_per_1k, PRICING
+
+from orchestrator.pricing import PRICING, calculate_cost, get_price_per_1k
 
 
 class TestCalculateCost:
@@ -144,6 +147,59 @@ class TestGetPricePer1k:
         """Test getting price for free provider."""
         price = get_price_per_1k("ollama", "llama2")
         assert price == 0.0
+
+
+class TestGetPricePer1kPrefixMatching:
+    """Test prefix matching for get_price_per_1k()."""
+
+    def test_get_price_prefix_match_mock_variants(self) -> None:
+        """Test that mock-1, mock-2 match 'mock' provider."""
+        price1 = get_price_per_1k("mock-1", "default")
+        price2 = get_price_per_1k("mock-2", "default")
+        price3 = get_price_per_1k("mock-async", "default")
+        assert price1 == 0.0
+        assert price2 == 0.0
+        assert price3 == 0.0
+
+    def test_get_price_longest_prefix_match(self) -> None:
+        """Test longest-prefix matching works correctly."""
+        # Test that "gigachat-dev" matches "gigachat" (prefix matching)
+        price = get_price_per_1k("gigachat-dev", "GigaChat")
+        assert price == pytest.approx(1.00)  # gigachat pricing
+
+        # Test that "yandexgpt-custom" matches "yandexgpt"
+        price2 = get_price_per_1k("yandexgpt-custom", "yandexgpt/latest")
+        assert price2 == pytest.approx(1.50)  # yandexgpt pricing
+
+    def test_get_price_fallback_to_shorter_prefix(self) -> None:
+        """Test fallback to shorter prefix (gigachat-dev → gigachat)."""
+        price = get_price_per_1k("gigachat-dev", "GigaChat")
+        assert price == pytest.approx(1.00)  # gigachat pricing
+
+    def test_get_price_no_false_positives(self) -> None:
+        """Ensure 'mockery' doesn't match 'mock' (requires '-' separator)."""
+        price = get_price_per_1k("mockery", "default")
+        assert price == 0.0  # Unknown provider, returns 0.0
+
+    def test_get_price_exact_match_priority(self) -> None:
+        """Test that exact match takes priority over prefix match."""
+        price = get_price_per_1k("mock", "default")
+        assert price == 0.0  # Exact match for "mock"
+
+    def test_get_price_no_warning_for_variants(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Verify no warnings for known variants."""
+        with caplog.at_level(logging.WARNING):
+            get_price_per_1k("mock-1", "default")
+            assert "Unknown provider" not in caplog.text
+
+        with caplog.at_level(logging.WARNING):
+            get_price_per_1k("gigachat-dev", "GigaChat")
+            assert "Unknown provider" not in caplog.text
+
+        # Unknown provider should still log warning
+        with caplog.at_level(logging.WARNING):
+            get_price_per_1k("unknown-provider", "some-model")
+            assert "Unknown provider" in caplog.text
 
 
 class TestPricingTable:

@@ -5,6 +5,35 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2025-12-23
+
+### Fixed
+
+- **Prometheus metrics endpoint charset**: Fixed charset conflict in `/metrics` endpoint response headers
+  - Content-Type now correctly includes `charset=utf-8` without conflicts
+  - Added unit test to verify charset handling
+  
+- **Provider prefix matching**: Fixed "Unknown provider" warnings for provider variants
+  - `get_price_per_1k()` now supports longest-prefix matching (e.g., "mock-1" → "mock")
+  - Added helper function `_find_provider_prefix()` for consistent matching logic
+  - Edge cases handled: "gigachat-pro-custom" → "gigachat-pro" (longest match)
+  - False positives prevented: "mockery" doesn't match "mock" (requires "-" separator)
+  
+- **tiktoken Windows compatibility**: Updated to version 0.12.0 for pre-built Windows wheels
+  - Resolves compilation issues on Windows systems
+  - Previous version (^0.5.2) required compilation from source
+
+### Testing
+
+- Added unit test for Prometheus endpoint charset verification
+- Added comprehensive tests for provider prefix matching edge cases
+- All existing tests continue to pass (203+ tests)
+
+### Notes
+
+- Backward compatible with v0.7.0 (no breaking changes)
+- Test coverage maintained at ≥81%
+
 ## [0.7.0] - 2024-12-22
 
 ### Added
@@ -60,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 
 - Added: `prometheus-client` ^0.19.0
-- Added: `tiktoken` ^0.5.2
+- Added: `tiktoken` ^0.12.0 (updated from ^0.5.2 in v0.7.1 for Windows compatibility)
 - Added: `aiohttp` ^3.9.1
 
 ### Notes
