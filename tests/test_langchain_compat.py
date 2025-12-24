@@ -5,6 +5,7 @@ including parameter mapping, sync/async calls, and error handling.
 """
 
 import sys
+import asyncio
 
 import pytest
 
@@ -175,6 +176,37 @@ class TestMultiLLMOrchestratorCall:
         assert len(response) > 0
         assert response.startswith("Mock response to:")
 
+    @pytest.mark.asyncio
+    async def test_multiple_calls_from_async_context(
+        self, router_with_providers: Router
+    ) -> None:
+        """Test multiple sequential _call() invocations from async context.
+
+        Regression test for Issue #2: Event loop closes after first request.
+
+        Previously failed with pattern:
+        - 1st call: success
+        - 2nd call: RuntimeError: Event loop is closed
+        - 3rd call: success
+        - 4th call: RuntimeError: Event loop is closed
+
+        This test simulates production Telegram bot scenario where users send
+        multiple messages in quick succession via asyncio.to_thread() calls.
+        """
+        llm = MultiLLMOrchestrator(router=router_with_providers)
+
+        results: list[str] = []
+        for i in range(1, 6):
+            response = await asyncio.to_thread(
+                llm._call, f"Request #{i}: What is Python?"
+            )
+            results.append(response)
+
+        assert len(results) == 5
+        assert all(isinstance(r, str) for r in results)
+        assert all(len(r) > 0 for r in results)
+        assert all(r.startswith("Mock response to:") for r in results)
+
 
 class TestMultiLLMOrchestratorACall:
     """Test asynchronous _acall() method."""
@@ -295,6 +327,72 @@ class TestMultiLLMOrchestratorGenerate:
             assert isinstance(generation_list[0].text, str)
             assert len(generation_list[0].text) > 0
 
+    @pytest.mark.asyncio
+    async def test_multiple_generate_calls_from_async_context(
+        self, router_with_providers: Router
+    ) -> None:
+        """Test multiple sequential _generate() calls from async context.
+
+        Regression test for Issue #2: Event loop closes after first request.
+
+        Ensures that batch processing via _generate() is stable when invoked
+        multiple times from an async context using asyncio.to_thread().
+        """
+        llm = MultiLLMOrchestrator(router=router_with_providers)
+
+        prompts_batch_1 = ["Question 1", "Question 2"]
+        result1 = await asyncio.to_thread(llm._generate, prompts_batch_1)
+        assert len(result1.generations) == 2
+        for generation_list in result1.generations:
+            assert len(generation_list) == 1
+            assert hasattr(generation_list[0], "text")
+            assert isinstance(generation_list[0].text, str)
+            assert len(generation_list[0].text) > 0
+            assert generation_list[0].text.startswith("Mock response to:")
+
+        prompts_batch_2 = ["Question 3", "Question 4"]
+        result2 = await asyncio.to_thread(llm._generate, prompts_batch_2)
+        assert len(result2.generations) == 2
+        for generation_list in result2.generations:
+            assert len(generation_list) == 1
+            assert hasattr(generation_list[0], "text")
+            assert generation_list[0].text.startswith("Mock response to:")
+
+        prompts_batch_3 = ["Question 5", "Question 6"]
+        result3 = await asyncio.to_thread(llm._generate, prompts_batch_3)
+        assert len(result3.generations) == 2
+        for generation_list in result3.generations:
+            assert len(generation_list) == 1
+            assert hasattr(generation_list[0], "text")
+            assert isinstance(generation_list[0].text, str)
+            assert len(generation_list[0].text) > 0
+
+
+class TestMultiLLMOrchestratorThreadSafety:
+    """Test thread safety and concurrent request handling for MultiLLMOrchestrator."""
+
+    @pytest.mark.asyncio
+    async def test_rapid_fire_requests(
+        self, router_with_providers: Router
+    ) -> None:
+        """Test rapid-fire _call() requests without delays.
+
+        Simulates high-load scenario where multiple users send messages
+        simultaneously (e.g., peak hours in production bot). This is a
+        regression test around Issue #2 to ensure that concurrent calls
+        do not surface "Event loop is closed" due to thread reuse.
+        """
+        llm = MultiLLMOrchestrator(router=router_with_providers)
+
+        tasks = [
+            asyncio.to_thread(llm._call, f"Rapid request #{i}") for i in range(5)
+        ]
+
+        results = await asyncio.gather(*tasks)
+
+        assert len(results) == 5
+        assert all(isinstance(r, str) for r in results)
+        assert all(len(r) > 0 for r in results)
 
 class TestMultiLLMOrchestratorImportError:
     """Test ImportError handling when langchain-core is not available."""

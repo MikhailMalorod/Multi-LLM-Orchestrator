@@ -5,7 +5,42 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.1] - 2025-12-23
+## [0.7.3] - 2025-12-24
+
+### Fixed
+
+- **CRITICAL**: Fixed "Event loop is closed" error on repeated requests in async contexts (#2)
+  - Root cause: `loop.close()` left closed event loop in thread-local storage
+  - ThreadPoolExecutor reuses threads → closed loop reused on every even request → 50% success rate
+  - Solution: Replace manual event loop management with `asyncio.run()` for automatic cleanup
+  - Affected methods: `MultiLLMOrchestrator._call()` and `._generate()`
+  - Multiple sequential requests now work correctly in Telegram bots, FastAPI, and other async applications
+
+### Technical Details
+
+- **Pattern**: Every even request (2nd, 4th, 6th, ...) failed with `"Event loop is closed"`
+- **ThreadPoolExecutor behavior**: Reuses threads for efficiency, which reused closed event loops
+- **asyncio.run() advantage**: Automatically calls `asyncio.set_event_loop(None)` to clean thread-local state
+- **Production impact**: Telegram bot had ~50% success rate (every second user message failed)
+
+### Migration
+
+- **No action required** for users — upgrade to v0.7.3 and the issue is resolved automatically
+- If using **v0.7.0**: Upgrade to v0.7.3 to fix both Issue #1 (asyncio.run in running loop) and #2
+- If using **v0.7.2**: Upgrade to v0.7.3 immediately (critical regression fix)
+
+### Testing
+
+- Added regression tests: `test_multiple_calls_from_async_context()`, `test_multiple_generate_calls_from_async_context()`, `test_rapid_fire_requests()`
+- Verified locally that multiple sequential and concurrent calls from async contexts no longer produce `"Event loop is closed"`
+
+### Regression
+
+- v0.7.2 introduced event loop closure bug affecting production Telegram bots
+- Second and subsequent requests in thread pool could fail with `RuntimeError: Event loop is closed`
+- Fixed by using `asyncio.run()` which creates an isolated event loop per call with proper cleanup
+
+## [0.7.2] - 2025-12-23
 
 ### Fixed
 
@@ -33,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Backward compatible with v0.7.0 (no breaking changes)
 - Test coverage maintained at ≥81%
+- Includes fix for Issue #1 related to `RuntimeError: asyncio.run() cannot be called from a running event loop` when calling sync APIs from async contexts
 
 ## [0.7.0] - 2024-12-22
 
