@@ -192,10 +192,11 @@ if LANGCHAIN_AVAILABLE:
                 LLMResult object containing generated text responses
 
             Note:
-                This method creates a new event loop for execution, which is safe
-                for use in synchronous contexts (like LangChain's sync API) and
-                will not conflict with existing async contexts (e.g., Telegram bots, FastAPI).
-                For native async execution, use _acall() instead.
+                Uses asyncio.run() internally to ensure proper event loop cleanup
+                and prevent "Event loop is closed" errors in thread pool contexts.
+                This fixes Issue #2 where closed event loops persisted in
+                thread-local storage, causing ~50% success rate on repeated
+                requests. For native async execution, use _acall() instead.
 
             Raises:
                 ProviderError: If no providers are registered or all providers fail
@@ -206,38 +207,42 @@ if LANGCHAIN_AVAILABLE:
             """
             # Map parameters (uses defaults from GenerationParams for missing params)
             params = self._map_params(stop, **kwargs)
-            
+
             # Check if there's a running event loop
             try:
                 asyncio.get_running_loop()
+
                 # Running loop exists - use thread pool to run in isolated loop
-                def _run_batch():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        generations = []
-                        for prompt in prompts:
-                            text = loop.run_until_complete(self.router.route(prompt, params=params))
-                            generations.append([Generation(text=text)])
-                        return LLMResult(generations=generations)
-                    finally:
-                        loop.close()
-                
+                def _run_batch() -> Any:
+                    """Execute batch generation in isolated event loop.
+
+                    Uses asyncio.run() which automatically creates a new event loop,
+                    executes the coroutine, and properly cleans up thread-local
+                    storage. This ensures no closed event loops persist between
+                    thread reuses in ThreadPoolExecutor.
+                    """
+                    generations = []
+                    for prompt in prompts:
+                        # asyncio.run() creates isolated loop and cleans thread-local storage
+                        # preventing "Event loop is closed" on ThreadPoolExecutor thread reuse
+                        text = asyncio.run(
+                            self.router.route(prompt, params=params)
+                        )
+                        generations.append([Generation(text=text)])
+                    return LLMResult(generations=generations)
+
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(_run_batch)
                     return future.result()
             except RuntimeError:
-                # No running loop - create isolated event loop
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    generations = []
-                    for prompt in prompts:
-                        text = loop.run_until_complete(self.router.route(prompt, params=params))
-                        generations.append([Generation(text=text)])
-                    return LLMResult(generations=generations)
-                finally:
-                    loop.close()
+                # No running loop - use asyncio.run() directly for each prompt
+                generations = []
+                for prompt in prompts:
+                    # asyncio.run() creates isolated loop and cleans thread-local storage
+                    # preventing "Event loop is closed" on ThreadPoolExecutor thread reuse
+                    text = asyncio.run(self.router.route(prompt, params=params))
+                    generations.append([Generation(text=text)])
+                return LLMResult(generations=generations)
 
         def _call(
             self, prompt: str, stop: list[str] | None = None, **kwargs: Any
@@ -257,10 +262,11 @@ if LANGCHAIN_AVAILABLE:
                 Generated text response from the Router
 
             Note:
-                This method creates a new event loop for execution, which is safe
-                for use in synchronous contexts (like LangChain's sync API) and
-                will not conflict with existing async contexts (e.g., Telegram bots, FastAPI).
-                For native async execution, use _acall() instead.
+                Uses asyncio.run() internally to ensure proper event loop cleanup
+                and prevent "Event loop is closed" errors in thread pool contexts.
+                This fixes Issue #2 where closed event loops persisted in
+                thread-local storage, causing ~50% success rate on repeated
+                requests. For native async execution, use _acall() instead.
 
             Raises:
                 ProviderError: If no providers are registered or all providers fail
@@ -271,25 +277,32 @@ if LANGCHAIN_AVAILABLE:
             """
             # Map parameters (uses defaults from GenerationParams for missing params)
             params = self._map_params(stop, **kwargs)
-            
+
             # Check if there's a running event loop
             try:
                 asyncio.get_running_loop()
+
                 # Running loop exists - use thread pool to run in isolated loop
+                def _run_in_thread() -> str:
+                    """Execute generation in isolated event loop.
+
+                    Uses asyncio.run() which automatically creates a new event loop,
+                    executes the coroutine, and properly cleans up thread-local
+                    storage. This ensures no closed event loops persist between
+                    thread reuses in ThreadPoolExecutor.
+                    """
+                    # asyncio.run() creates isolated loop and cleans thread-local storage
+                    # preventing "Event loop is closed" on ThreadPoolExecutor thread reuse
+                    return asyncio.run(self.router.route(prompt, params=params))
+
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run, 
-                        self.router.route(prompt, params=params)
-                    )
+                    future = executor.submit(_run_in_thread)
                     return future.result()
             except RuntimeError:
-                # No running loop - create isolated event loop
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    return loop.run_until_complete(self.router.route(prompt, params=params))
-                finally:
-                    loop.close()
+                # No running loop - use asyncio.run() directly
+                # asyncio.run() creates isolated loop and cleans thread-local storage
+                # preventing "Event loop is closed" on ThreadPoolExecutor thread reuse
+                return asyncio.run(self.router.route(prompt, params=params))
 
         async def _acall(
             self, prompt: str, stop: list[str] | None = None, **kwargs: Any
