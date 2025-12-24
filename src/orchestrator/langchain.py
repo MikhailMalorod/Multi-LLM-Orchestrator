@@ -192,11 +192,17 @@ if LANGCHAIN_AVAILABLE:
                 LLMResult object containing generated text responses
 
             Note:
-                Uses asyncio.run() internally to ensure proper event loop cleanup
-                and prevent "Event loop is closed" errors in thread pool contexts.
-                This fixes Issue #2 where closed event loops persisted in
-                thread-local storage, causing ~50% success rate on repeated
-                requests. For native async execution, use _acall() instead.
+                Uses enhanced event loop cleanup to ensure httpx.AsyncClient cleanup
+                executes before loop.close(). This fixes Issue #4 where httpx cleanup
+                executed AFTER loop.close(), causing ~50% failure rate in production
+                Telegram bots with asyncio.to_thread() pattern.
+
+                v0.7.4 improvements:
+                - asyncio.sleep(0) forces loop to process pending callbacks
+                - shutdown_asyncgens() explicitly closes async generators
+                - shutdown_default_executor() closes thread pool if used
+
+                See: https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues/4
 
             Raises:
                 ProviderError: If no providers are registered or all providers fail
@@ -214,22 +220,32 @@ if LANGCHAIN_AVAILABLE:
 
                 # Running loop exists - use thread pool to run in isolated loop
                 def _run_batch() -> Any:
-                    """Execute batch generation in isolated event loop.
+                    """Execute batch generation in isolated event loop with enhanced cleanup.
 
-                    Uses asyncio.run() which automatically creates a new event loop,
-                    executes the coroutine, and properly cleans up thread-local
-                    storage. This ensures no closed event loops persist between
-                    thread reuses in ThreadPoolExecutor.
+                    Creates a new event loop, executes all prompts sequentially, and
+                    performs comprehensive cleanup to ensure httpx.AsyncClient cleanup
+                    tasks execute before loop.close().
                     """
-                    generations = []
-                    for prompt in prompts:
-                        # asyncio.run() creates isolated loop and cleans thread-local storage
-                        # preventing "Event loop is closed" on ThreadPoolExecutor thread reuse
-                        text = asyncio.run(
-                            self.router.route(prompt, params=params)
-                        )
-                        generations.append([Generation(text=text)])
-                    return LLMResult(generations=generations)
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        generations = []
+                        for prompt in prompts:
+                            result = loop.run_until_complete(
+                                self.router.route(prompt, params=params)
+                            )
+                            generations.append([Generation(text=result)])
+
+                        # Enhanced cleanup (fixes Issue #4)
+                        loop.run_until_complete(asyncio.sleep(0))
+                        loop.run_until_complete(loop.shutdown_asyncgens())
+                        if hasattr(loop, 'shutdown_default_executor'):
+                            loop.run_until_complete(loop.shutdown_default_executor())
+
+                        return LLMResult(generations=generations)
+                    finally:
+                        loop.close()
+                        asyncio.set_event_loop(None)
 
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(_run_batch)
@@ -262,11 +278,17 @@ if LANGCHAIN_AVAILABLE:
                 Generated text response from the Router
 
             Note:
-                Uses asyncio.run() internally to ensure proper event loop cleanup
-                and prevent "Event loop is closed" errors in thread pool contexts.
-                This fixes Issue #2 where closed event loops persisted in
-                thread-local storage, causing ~50% success rate on repeated
-                requests. For native async execution, use _acall() instead.
+                Uses enhanced event loop cleanup to ensure httpx.AsyncClient cleanup
+                executes before loop.close(). This fixes Issue #4 where httpx cleanup
+                executed AFTER loop.close(), causing ~50% failure rate in production
+                Telegram bots with asyncio.to_thread() pattern.
+
+                v0.7.4 improvements:
+                - asyncio.sleep(0) forces loop to process pending callbacks
+                - shutdown_asyncgens() explicitly closes async generators
+                - shutdown_default_executor() closes thread pool if used
+
+                See: https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues/4
 
             Raises:
                 ProviderError: If no providers are registered or all providers fail
@@ -284,16 +306,31 @@ if LANGCHAIN_AVAILABLE:
 
                 # Running loop exists - use thread pool to run in isolated loop
                 def _run_in_thread() -> str:
-                    """Execute generation in isolated event loop.
+                    """Execute generation in isolated event loop with enhanced cleanup.
 
-                    Uses asyncio.run() which automatically creates a new event loop,
-                    executes the coroutine, and properly cleans up thread-local
-                    storage. This ensures no closed event loops persist between
-                    thread reuses in ThreadPoolExecutor.
+                    Creates a new event loop, executes the coroutine, and performs
+                    comprehensive cleanup to ensure httpx.AsyncClient cleanup tasks
+                    execute before loop.close(). This prevents "Event loop is closed"
+                    errors when httpx attempts cleanup after loop closure.
                     """
-                    # asyncio.run() creates isolated loop and cleans thread-local storage
-                    # preventing "Event loop is closed" on ThreadPoolExecutor thread reuse
-                    return asyncio.run(self.router.route(prompt, params=params))
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result = loop.run_until_complete(
+                            self.router.route(prompt, params=params)
+                        )
+
+                        # Enhanced cleanup to ensure httpx.AsyncClient cleanup
+                        # executes before loop.close() (fixes Issue #4)
+                        loop.run_until_complete(asyncio.sleep(0))
+                        loop.run_until_complete(loop.shutdown_asyncgens())
+                        if hasattr(loop, 'shutdown_default_executor'):
+                            loop.run_until_complete(loop.shutdown_default_executor())
+
+                        return result
+                    finally:
+                        loop.close()
+                        asyncio.set_event_loop(None)
 
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(_run_in_thread)

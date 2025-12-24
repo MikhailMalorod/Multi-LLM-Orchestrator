@@ -133,11 +133,10 @@ class YandexGPTProvider(BaseProvider):
         if not config.folder_id:
             raise ValueError("folder_id is required for YandexGPTProvider")
 
-        # HTTP client with configured timeout and SSL verification
-        self._client = httpx.AsyncClient(
-            timeout=config.timeout,
-            verify=config.verify_ssl
-        )
+        # Store config for creating clients per request (fixes Issue #4)
+        # httpx.AsyncClient will be created via context manager in generate()
+        self._timeout = config.timeout
+        self._verify_ssl = config.verify_ssl
 
         # Log security warning if SSL verification is disabled
         if not config.verify_ssl:
@@ -265,22 +264,29 @@ class YandexGPTProvider(BaseProvider):
         )
 
         try:
-            # Make API request
-            response = await self._client.post(url, headers=headers, json=payload)
+            # Create new httpx.AsyncClient for this request (fixes Issue #4)
+            # Context manager ensures cleanup executes BEFORE loop.close()
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                verify=self._verify_ssl
+            ) as client:
+                # Make API request
+                response = await client.post(url, headers=headers, json=payload)
 
-            # Handle errors
-            if response.status_code != 200:
-                self._handle_error(response)
+                # Handle errors
+                if response.status_code != 200:
+                    self._handle_error(response)
 
-            # Parse successful response
-            # Response structure: {"result": {"alternatives": [{"message": {"text": "..."}}]}}
-            data: dict[str, Any] = cast(dict[str, Any], response.json())
-            response_text: str = cast(
-                str, data["result"]["alternatives"][0]["message"]["text"]
-            )
+                # Parse successful response
+                # Response structure: {"result": {"alternatives": [{"message": {"text": "..."}}]}}
+                data: dict[str, Any] = cast(dict[str, Any], response.json())
+                response_text: str = cast(
+                    str, data["result"]["alternatives"][0]["message"]["text"]
+                )
 
-            self.logger.debug(f"Received response: {len(response_text)} characters")
-            return response_text
+                self.logger.debug(f"Received response: {len(response_text)} characters")
+                return response_text
+            # ✅ httpx cleanup executes here, BEFORE loop.close()
 
         except httpx.TimeoutException:
             raise TimeoutError(
@@ -331,52 +337,46 @@ class YandexGPTProvider(BaseProvider):
             ```
         """
         try:
-            # Save original timeout
-            old_timeout = self._client.timeout
-            # Use short timeout for health check (5 seconds)
-            self._client.timeout = httpx.Timeout(5.0, connect=5.0)
+            # Create new client with short timeout for health check (fixes Issue #4)
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(5.0),
+                verify=self._verify_ssl
+            ) as client:
+                # Prepare minimal request
+                base_url = self.config.base_url or self.DEFAULT_BASE_URL
+                url = f"{base_url}{self.API_ENDPOINT}"
 
-            # Prepare minimal request
-            base_url = self.config.base_url or self.DEFAULT_BASE_URL
-            url = f"{base_url}{self.API_ENDPOINT}"
+                # api_key and folder_id are validated in __init__, so they are not None here
+                assert self.config.api_key is not None
+                assert self.config.folder_id is not None
+                headers: dict[str, str] = {
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "x-folder-id": self.config.folder_id,
+                    "Content-Type": "application/json",
+                }
 
-            # api_key and folder_id are validated in __init__, so they are not None here
-            assert self.config.api_key is not None
-            assert self.config.folder_id is not None
-            headers: dict[str, str] = {
-                "Authorization": f"Bearer {self.config.api_key}",
-                "x-folder-id": self.config.folder_id,
-                "Content-Type": "application/json",
-            }
+                # Minimal payload for health check
+                payload = {
+                    "modelUri": self._build_model_uri(),
+                    "completionOptions": {"stream": False, "maxTokens": 10},
+                    "messages": [{"role": "user", "text": "Hi"}],
+                }
 
-            # Minimal payload for health check
-            payload = {
-                "modelUri": self._build_model_uri(),
-                "completionOptions": {"stream": False, "maxTokens": 10},
-                "messages": [{"role": "user", "text": "Hi"}],
-            }
+                # Make minimal request
+                response = await client.post(url, headers=headers, json=payload)
 
-            # Make minimal request
-            response = await self._client.post(url, headers=headers, json=payload)
-
-            # Restore original timeout
-            self._client.timeout = old_timeout
-
-            # Health check passed if status is 200
-            is_healthy = response.status_code == 200
-            if is_healthy:
-                self.logger.debug("Health check passed: API accessible and token valid")
-            else:
-                self.logger.warning(
-                    f"Health check failed: API returned status {response.status_code}"
-                )
-            return is_healthy
+                # Health check passed if status is 200
+                is_healthy = response.status_code == 200
+                if is_healthy:
+                    self.logger.debug("Health check passed: API accessible and token valid")
+                else:
+                    self.logger.warning(
+                        f"Health check failed: API returned status {response.status_code}"
+                    )
+                return is_healthy
+            # ✅ httpx cleanup executes here
 
         except Exception as e:
-            # Restore timeout even on error
-            if hasattr(self, "_client"):
-                self._client.timeout = old_timeout
-
             self.logger.warning(f"Health check failed: {e}")
             return False
 

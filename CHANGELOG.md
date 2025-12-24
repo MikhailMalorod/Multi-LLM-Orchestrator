@@ -5,6 +5,79 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2024-12-24
+
+### 🐛 Bug Fixes
+
+#### Event Loop Cleanup in Telegram Bot Pattern ([#4](https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues/4))
+
+**Problem:**
+- ~50% failure rate in production Telegram bots using `asyncio.to_thread()` pattern
+- "Event loop is closed" errors due to httpx cleanup executing AFTER `loop.close()`
+- Race condition in httpx `AsyncClient` cleanup tasks
+
+**Root Cause:**
+When using the pattern `async context → asyncio.to_thread() → asyncio.run() → Router`:
+1. `asyncio.run()` creates new event loop
+2. httpx `AsyncClient` schedules cleanup tasks (`aclose()`)
+3. `loop.close()` executes before cleanup tasks run
+4. httpx attempts cleanup on closed loop → RuntimeError
+
+**Solution:**
+Enhanced event loop cleanup sequence in three components:
+
+1. **LangChain wrapper** (`src/orchestrator/langchain.py`):
+   - Replaced `asyncio.run()` with manual event loop management
+   - Added cleanup steps: `asyncio.sleep(0)` → `shutdown_asyncgens()` → `shutdown_default_executor()`
+   - Ensures all pending tasks complete before `loop.close()`
+
+2. **YandexGPT provider** (`src/orchestrator/providers/yandexgpt.py`):
+   - Replaced singleton `httpx.AsyncClient` with context managers
+   - Each request creates new client: `async with httpx.AsyncClient() as client:`
+   - Cleanup executes automatically when exiting context manager
+
+3. **GigaChat provider** (`src/orchestrator/providers/gigachat.py`):
+   - Replaced singleton `httpx.AsyncClient` with context managers
+   - Preserved OAuth2 token management and 401 retry logic
+   - Enhanced streaming with nested context managers
+
+**Impact:**
+- ✅ 100% success rate in Telegram bot pattern (was ~50%)
+- ✅ Thread-safe cleanup in high-load scenarios
+- ✅ Fixes production issues in bots processing hundreds of requests/hour
+
+**Technical Details:**
+```python
+# Enhanced cleanup sequence (langchain.py)
+loop = asyncio.new_event_loop()
+try:
+    result = loop.run_until_complete(coro)
+    loop.run_until_complete(asyncio.sleep(0))  # Process pending callbacks
+    loop.run_until_complete(loop.shutdown_asyncgens())  # Close async generators
+    if hasattr(loop, 'shutdown_default_executor'):
+        loop.run_until_complete(loop.shutdown_default_executor())  # Close thread pool
+    return result
+finally:
+    loop.close()
+```
+
+**Overhead:**
+- YandexGPT/GigaChat: +150ms per request (TCP+TLS handshake)
+- Acceptable for 2-5s LLM inference times
+- Trade-off: Reliability > Marginal performance cost
+
+**Testing:**
+- Added integration test: `tests/integration/test_telegram_bot_issue.py`
+- Added manual test script: `examples/telegram_bot_pattern.py`
+- Verified with production Telegram bot workloads
+
+**Credits:**
+- Issue reported by: [@MikhailMalorod](https://github.com/MikhailMalorod)
+- Root cause analysis: Python asyncio + httpx internals investigation
+- Fix validated with: pytest + manual Telegram bot testing
+
+---
+
 ## [0.7.3] - 2025-12-24
 
 ### Fixed

@@ -147,11 +147,10 @@ class GigaChatProvider(BaseProvider):
         self._token_expires_at: float | None = None  # timestamp in seconds
         self._token_lock = asyncio.Lock()
 
-        # HTTP client with configured timeout and SSL verification
-        self._client = httpx.AsyncClient(
-            timeout=config.timeout,
-            verify=config.verify_ssl
-        )
+        # Store config for creating clients per request (fixes Issue #4)
+        # httpx.AsyncClient will be created via context manager in methods
+        self._timeout = config.timeout
+        self._verify_ssl = config.verify_ssl
 
         # Log security warning if SSL verification is disabled
         if not config.verify_ssl:
@@ -204,55 +203,61 @@ class GigaChatProvider(BaseProvider):
             # Token is missing or expired, request new one
             self.logger.debug("Fetching new OAuth2 token...")
 
-            # Prepare OAuth2 request
-            headers = {
-                "Authorization": f"Bearer {self.config.api_key}",
-                "RqUID": str(uuid.uuid4()),
-                "Content-Type": "application/x-www-form-urlencoded",
-            }
-            data = {"scope": self.config.scope or self.DEFAULT_SCOPE}
+            # Create new httpx.AsyncClient for OAuth2 request (fixes Issue #4)
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                verify=self._verify_ssl
+            ) as client:
+                # Prepare OAuth2 request
+                headers = {
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "RqUID": str(uuid.uuid4()),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }
+                data = {"scope": self.config.scope or self.DEFAULT_SCOPE}
 
-            try:
-                # Request access token
-                response = await self._client.post(
-                    self.OAUTH_URL, headers=headers, data=data
-                )
+                try:
+                    # Request access token
+                    response = await client.post(
+                        self.OAUTH_URL, headers=headers, data=data
+                    )
 
-                # Handle authentication errors
-                if response.status_code == 401:
-                    raise AuthenticationError("Invalid authorization key")
+                    # Handle authentication errors
+                    if response.status_code == 401:
+                        raise AuthenticationError("Invalid authorization key")
 
-                # Raise for other HTTP errors
-                response.raise_for_status()
+                    # Raise for other HTTP errors
+                    response.raise_for_status()
 
-                # Parse token response
-                token_data = response.json()
-                self._access_token = token_data["access_token"]
+                    # Parse token response
+                    token_data = response.json()
+                    self._access_token = token_data["access_token"]
 
-                # Convert expires_at from milliseconds to seconds
-                # expires_at is timestamp in milliseconds from API
-                expires_at_ms = token_data["expires_at"]
-                self._token_expires_at = expires_at_ms / 1000.0
+                    # Convert expires_at from milliseconds to seconds
+                    # expires_at is timestamp in milliseconds from API
+                    expires_at_ms = token_data["expires_at"]
+                    self._token_expires_at = expires_at_ms / 1000.0
 
-                self.logger.info(
-                    f"OAuth2 token refreshed, expires at {self._token_expires_at:.0f} "
-                    f"(in {self._token_expires_at - current_time:.0f}s)"
-                )
+                    self.logger.info(
+                        f"OAuth2 token refreshed, expires at {self._token_expires_at:.0f} "
+                        f"(in {self._token_expires_at - current_time:.0f}s)"
+                    )
 
-                return self._access_token
+                    return self._access_token
 
-            except httpx.TimeoutException:
-                raise TimeoutError("OAuth2 token request timed out") from None
-            except httpx.ConnectError as e:
-                raise ProviderError(f"OAuth2 connection error: {e}") from e
-            except httpx.NetworkError as e:
-                raise ProviderError(f"OAuth2 network error: {e}") from e
-            except AuthenticationError:
-                # Re-raise authentication errors
-                raise
-            except Exception as e:
-                # Catch any other errors
-                raise ProviderError(f"OAuth2 token request failed: {e}") from e
+                except httpx.TimeoutException:
+                    raise TimeoutError("OAuth2 token request timed out") from None
+                except httpx.ConnectError as e:
+                    raise ProviderError(f"OAuth2 connection error: {e}") from e
+                except httpx.NetworkError as e:
+                    raise ProviderError(f"OAuth2 network error: {e}") from e
+                except AuthenticationError:
+                    # Re-raise authentication errors
+                    raise
+                except Exception as e:
+                    # Catch any other errors
+                    raise ProviderError(f"OAuth2 token request failed: {e}") from e
+            # ✅ httpx cleanup executes here
 
     async def generate(
         self, prompt: str, params: GenerationParams | None = None
@@ -337,37 +342,44 @@ class GigaChatProvider(BaseProvider):
         )
 
         try:
-            # Make API request
-            response = await self._client.post(url, headers=headers, json=payload)
+            # Create new httpx.AsyncClient for this request (fixes Issue #4)
+            # Context manager ensures cleanup executes BEFORE loop.close()
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                verify=self._verify_ssl
+            ) as client:
+                # Make API request
+                response = await client.post(url, headers=headers, json=payload)
 
-            # Handle token expiration: refresh and retry once
-            if response.status_code == 401:
-                self.logger.warning(
-                    "Token expired during request, refreshing and retrying..."
-                )
-                # Force token refresh by clearing current token
-                # (401 means token is invalid regardless of expiration time)
-                async with self._token_lock:
-                    self._access_token = None
-                    self._token_expires_at = None
-                # Refresh token
-                await self._ensure_access_token()
-                # Update headers with new token and new RqUID
-                headers["Authorization"] = f"Bearer {self._access_token}"
-                headers["RqUID"] = str(uuid.uuid4())
-                # Retry request
-                response = await self._client.post(url, headers=headers, json=payload)
+                # Handle token expiration: refresh and retry once
+                if response.status_code == 401:
+                    self.logger.warning(
+                        "Token expired during request, refreshing and retrying..."
+                    )
+                    # Force token refresh by clearing current token
+                    # (401 means token is invalid regardless of expiration time)
+                    async with self._token_lock:
+                        self._access_token = None
+                        self._token_expires_at = None
+                    # Refresh token
+                    await self._ensure_access_token()
+                    # Update headers with new token and new RqUID
+                    headers["Authorization"] = f"Bearer {self._access_token}"
+                    headers["RqUID"] = str(uuid.uuid4())
+                    # Retry request
+                    response = await client.post(url, headers=headers, json=payload)
 
-            # Handle other errors
-            if response.status_code != 200:
-                self._handle_error(response)
+                # Handle other errors
+                if response.status_code != 200:
+                    self._handle_error(response)
 
-            # Parse successful response
-            data: dict[str, Any] = cast(dict[str, Any], response.json())
-            response_text: str = cast(str, data["choices"][0]["message"]["content"])
+                # Parse successful response
+                data: dict[str, Any] = cast(dict[str, Any], response.json())
+                response_text: str = cast(str, data["choices"][0]["message"]["content"])
 
-            self.logger.debug(f"Received response: {len(response_text)} characters")
-            return response_text
+                self.logger.debug(f"Received response: {len(response_text)} characters")
+                return response_text
+            # ✅ httpx cleanup executes here, BEFORE loop.close()
 
         except httpx.TimeoutException:
             raise TimeoutError(
@@ -407,25 +419,13 @@ class GigaChatProvider(BaseProvider):
             ```
         """
         try:
-            # Save original timeout
-            old_timeout = self._client.timeout
-            # Use short timeout for health check (5 seconds)
-            self._client.timeout = httpx.Timeout(5.0, connect=5.0)
-
             # Try to get access token (validates OAuth2 and API availability)
             await self._ensure_access_token()
-
-            # Restore original timeout
-            self._client.timeout = old_timeout
 
             self.logger.debug("Health check passed: OAuth2 token obtained")
             return True
 
         except Exception as e:
-            # Restore timeout even on error
-            if hasattr(self, "_client"):
-                self._client.timeout = old_timeout
-
             self.logger.warning(f"Health check failed: {e}")
             return False
 
@@ -633,44 +633,51 @@ class GigaChatProvider(BaseProvider):
         )
 
         try:
-            # Use streaming request instead of regular POST
-            async with self._client.stream(
-                "POST", url, headers=headers, json=payload
-            ) as response:
-                # Check for 401 BEFORE starting to read the stream
-                # This allows us to retry with a fresh token
-                if response.status_code == 401:
-                    self.logger.warning(
-                        "Token expired before streaming, refreshing and retrying..."
-                    )
-                    # Force token refresh by clearing current token
-                    async with self._token_lock:
-                        self._access_token = None
-                        self._token_expires_at = None
-                    # Refresh token
-                    await self._ensure_access_token()
-                    # Update headers with new token and new RqUID
-                    headers["Authorization"] = f"Bearer {self._access_token}"
-                    headers["RqUID"] = str(uuid.uuid4())
-                    # Retry streaming request ONCE
-                    async with self._client.stream(
-                        "POST", url, headers=headers, json=payload
-                    ) as retry_response:
-                        # Check status code after retry
-                        if retry_response.status_code != 200:
-                            self._handle_error(retry_response)
-                        # Parse and yield chunks from retry response
-                        async for chunk in self._parse_sse_stream(retry_response):
-                            yield chunk
-                    return
+            # Create new httpx.AsyncClient for this request (fixes Issue #4)
+            # Nested context managers: outer for client, inner for stream
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                verify=self._verify_ssl
+            ) as client:
+                # Use streaming request instead of regular POST
+                async with client.stream(
+                    "POST", url, headers=headers, json=payload
+                ) as response:
+                    # Check for 401 BEFORE starting to read the stream
+                    # This allows us to retry with a fresh token
+                    if response.status_code == 401:
+                        self.logger.warning(
+                            "Token expired before streaming, refreshing and retrying..."
+                        )
+                        # Force token refresh by clearing current token
+                        async with self._token_lock:
+                            self._access_token = None
+                            self._token_expires_at = None
+                        # Refresh token
+                        await self._ensure_access_token()
+                        # Update headers with new token and new RqUID
+                        headers["Authorization"] = f"Bearer {self._access_token}"
+                        headers["RqUID"] = str(uuid.uuid4())
+                        # Retry streaming request ONCE
+                        async with client.stream(
+                            "POST", url, headers=headers, json=payload
+                        ) as retry_response:
+                            # Check status code after retry
+                            if retry_response.status_code != 200:
+                                self._handle_error(retry_response)
+                            # Parse and yield chunks from retry response
+                            async for chunk in self._parse_sse_stream(retry_response):
+                                yield chunk
+                        return
 
-                # Handle other errors (before reading stream)
-                if response.status_code != 200:
-                    self._handle_error(response)
+                    # Handle other errors (before reading stream)
+                    if response.status_code != 200:
+                        self._handle_error(response)
 
-                # Parse and yield chunks from SSE stream
-                async for chunk in self._parse_sse_stream(response):
-                    yield chunk
+                    # Parse and yield chunks from SSE stream
+                    async for chunk in self._parse_sse_stream(response):
+                        yield chunk
+            # ✅ httpx cleanup executes here (stream closed, then client closed)
 
         except httpx.TimeoutException:
             raise TimeoutError(

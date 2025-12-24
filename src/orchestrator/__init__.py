@@ -9,7 +9,7 @@ This package provides:
         (requires: pip install multi-llm-orchestrator[langchain])
 """
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 __author__ = "Multi-LLM Orchestrator Contributors"
 
 from .config import Config
