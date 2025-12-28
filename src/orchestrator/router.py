@@ -146,6 +146,101 @@ class Router:
         self.metrics[provider_name] = ProviderMetrics()
         self.logger.info(f"Added provider: {provider_name}")
 
+    async def update_providers(
+        self,
+        new_providers: list[BaseProvider],
+        preserve_metrics: bool = False,
+    ) -> None:
+        """Update providers without recreating Router.
+
+        Zero-downtime provider swap. Active requests continue on old providers,
+        new requests use updated provider list.
+
+        Args:
+            new_providers: List of new provider instances
+            preserve_metrics: If True, preserve metrics for providers with matching names.
+                             If False (default), reset all metrics.
+
+        Raises:
+            ValueError: If new_providers is empty or contains duplicate names
+
+        Example:
+            ```python
+            # Simple update (reset metrics)
+            new_gigachat = GigaChatProvider(config1)
+            new_yandex = YandexGPTProvider(config2)
+            await router.update_providers([new_gigachat, new_yandex])
+
+            # Preserve metrics for matching provider names
+            await router.update_providers([new_gigachat], preserve_metrics=True)
+            ```
+        """
+        # 1. Validation (before any changes)
+        if not new_providers:
+            raise ValueError("new_providers cannot be empty")
+
+        # Check for duplicates in new_providers
+        new_names = [p.config.name for p in new_providers]
+        if len(new_names) != len(set(new_names)):
+            duplicates = [name for name in new_names if new_names.count(name) > 1]
+            raise ValueError(
+                f"Duplicate provider names in new_providers: {set(duplicates)}"
+            )
+
+        # 2. Detect model changes (BEFORE clearing self.providers)
+        if preserve_metrics:
+            # Build lookup dict for O(1) access
+            old_providers_by_name = {p.config.name: p for p in self.providers}
+
+            for provider in new_providers:
+                name = provider.config.name
+                old_provider = old_providers_by_name.get(name)
+                if old_provider and old_provider.config.model != provider.config.model:
+                    self.logger.warning(
+                        f"Provider '{name}' model changed: "
+                        f"{old_provider.config.model} → {provider.config.model}. "
+                        f"Metrics preserved but may be inconsistent."
+                    )
+
+        # 3. Handle metrics
+        if preserve_metrics:
+            new_provider_names = {p.config.name for p in new_providers}
+
+            # Remove metrics for providers not in new list
+            metrics_to_remove = [
+                name for name in list(self.metrics.keys())
+                if name not in new_provider_names
+            ]
+            for name in metrics_to_remove:
+                del self.metrics[name]
+
+            # Create metrics for new providers (if not exist)
+            for provider in new_providers:
+                if provider.config.name not in self.metrics:
+                    self.metrics[provider.config.name] = ProviderMetrics()
+        else:
+            # Reset all metrics and create for new providers
+            self.metrics.clear()
+            for provider in new_providers:
+                self.metrics[provider.config.name] = ProviderMetrics()
+
+        # 4. Atomic provider swap
+        self.providers.clear()
+        self.providers.extend(new_providers)
+
+        # 5. Reset round-robin index
+        self._current_index = 0
+
+        # 6. Logging
+        self.logger.info(
+            "providers_updated",
+            extra={
+                "provider_count": len(new_providers),
+                "provider_names": [p.config.name for p in new_providers],
+                "metrics_preserved": preserve_metrics,
+            },
+        )
+
     def _log_request_event(
         self,
         provider_name: str,
@@ -280,7 +375,12 @@ class Router:
                 )
 
                 # Update metrics with tokens and cost
-                metrics = self.metrics[provider.config.name]
+                # Use get() to handle race condition with update_providers()
+                metrics = self.metrics.get(provider.config.name)
+                if metrics is None:
+                    # Metrics were removed during update_providers(), create new one
+                    metrics = ProviderMetrics()
+                    self.metrics[provider.config.name] = metrics
                 metrics.record_success(
                     latency_ms=latency_ms,
                     prompt_tokens=prompt_tokens,
@@ -308,7 +408,12 @@ class Router:
             except Exception as e:
                 # Calculate latency even for failed requests
                 latency_ms = (time.perf_counter() - start_time) * 1000
-                metrics = self.metrics[provider.config.name]
+                # Use get() to handle race condition with update_providers()
+                metrics = self.metrics.get(provider.config.name)
+                if metrics is None:
+                    # Metrics were removed during update_providers(), create new one
+                    metrics = ProviderMetrics()
+                    self.metrics[provider.config.name] = metrics
                 metrics.record_error(
                     latency_ms, datetime.now(UTC)
                 )
@@ -626,7 +731,12 @@ class Router:
                     )
 
                     # Update metrics with tokens and cost
-                    metrics = self.metrics[provider.config.name]
+                    # Use get() to handle race condition with update_providers()
+                    metrics = self.metrics.get(provider.config.name)
+                    if metrics is None:
+                        # Metrics were removed during update_providers(), create new one
+                        metrics = ProviderMetrics()
+                        self.metrics[provider.config.name] = metrics
                     metrics.record_success(
                         latency_ms=latency_ms,
                         prompt_tokens=prompt_tokens,
@@ -655,7 +765,12 @@ class Router:
                 except Exception as stream_error:
                     # Calculate latency even for failed requests
                     latency_ms = (time.perf_counter() - start_time) * 1000
-                    metrics = self.metrics[provider.config.name]
+                    # Use get() to handle race condition with update_providers()
+                    metrics = self.metrics.get(provider.config.name)
+                    if metrics is None:
+                        # Metrics were removed during update_providers(), create new one
+                        metrics = ProviderMetrics()
+                        self.metrics[provider.config.name] = metrics
                     metrics.record_error(
                         latency_ms, datetime.now(UTC)
                     )

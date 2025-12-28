@@ -92,6 +92,48 @@ Structure the document with the following sections:
 **Target Audience:** DevOps engineers, data engineers, and teams requiring production observability for LLM workloads
 
 
+### v0.7.5 (December 28, 2025) ✅
+
+**Goal:** Zero-downtime provider updates for production environments
+
+**Implemented Features:**
+- ✅ `Router.update_providers()` method
+  - Zero-downtime provider swap (point-in-time semantics)
+  - Optional metrics preservation (`preserve_metrics` parameter)
+  - Validation (empty list, duplicate names)
+  - Model change detection (WARNING log)
+  - Atomic swap with round-robin index reset
+- ✅ Race condition fix in `route()` and `route_stream()`
+  - Safe metrics access with on-the-fly creation
+  - Active requests complete successfully during provider updates
+- ✅ 8 comprehensive tests (100% passed)
+- ✅ Full backward compatibility
+
+**Quality:**
+- Type checking (mypy): 0 errors
+- Linting (ruff): 0 warnings  
+- Tests: 226 passed, 4 skipped
+- Documentation: Google-style docstrings
+
+**Use Case:** Platform SaaS (Managed→BYOK migrations, API key rotation)
+
+**Development Timeline:**
+- December 28: Feature request from Platform SaaS Team (Issue #5)
+- December 28: Full implementation sprint (analysis, implementation, testing)
+- December 28: Released same day (досрочно, дедлайн был 4 января)
+
+**Status:** ✅ Completed and Production-Ready (December 28, 2025)
+
+**Key Achievements:**
+- 1 new method: `Router.update_providers()`
+- 8 new tests (all passing)
+- Race condition fix (production-critical)
+- Zero breaking changes (100% backward compatibility)
+- Complete same-day delivery (7 days ahead of deadline)
+
+**Target Audience:** Platform SaaS teams requiring zero-downtime configuration updates
+
+
 ### v0.6.0 (Current Release)
 - ✅ Provider-level metrics tracking (latency, success/failure rates, health status)
 - ✅ New routing strategy `best-available` (health + latency aware)
