@@ -5,6 +5,37 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] - 2026-01-10
+
+### Added
+- **Usage tracking callbacks** for billing and analytics integration ([#7](https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues/7))
+  - Python callback support via `usage_callback` parameter
+  - HTTP POST callback support via `callback_url` parameter
+  - Optional context fields: `tenant_id`, `platform_key_id`
+  - Comprehensive usage data: tokens, cost, latency, success status
+  - Fail-silent behavior: callback errors don't disrupt requests
+  - Full streaming support (`route()` and `route_stream()`)
+  - Complete fallback support (callback invoked for each provider attempt)
+
+### Examples
+```python
+# Python callback
+async def track_usage(data: UsageData) -> None:
+    print(f"Cost: {data.cost} RUB, Tokens: {data.total_tokens}")
+
+router = Router(usage_callback=track_usage)
+
+# HTTP POST callback (for Platform SaaS)
+router = Router(
+    callback_url="https://api.example.com/usage",
+    tenant_id="tenant-123",
+    platform_key_id="key-456",
+)
+```
+
+### Breaking Changes
+None - fully backward compatible.
+
 ## [0.7.5] - 2025-12-28
 
 ### Added

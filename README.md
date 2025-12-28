@@ -485,6 +485,93 @@ asyncio.run(main())
 
 See [docs/observability.md](docs/observability.md) for detailed guide.
 
+## Usage Tracking
+
+Track LLM usage for billing and analytics using callbacks. Supports both Python callbacks for in-process tracking and HTTP POST callbacks for remote billing APIs.
+
+### Python Callback
+
+Use a Python async function to track usage data:
+
+```python
+import asyncio
+from orchestrator import Router, UsageData
+from orchestrator.providers import ProviderConfig, MockProvider
+
+async def track_usage(data: UsageData) -> None:
+    """Send usage data to billing API."""
+    print(f"Provider: {data.provider_name}")
+    print(f"Model: {data.model}")
+    print(f"Tokens: {data.total_tokens} (prompt: {data.prompt_tokens}, completion: {data.completion_tokens})")
+    print(f"Cost: {data.cost:.2f} RUB")
+    print(f"Latency: {data.latency_ms:.2f}ms")
+    print(f"Success: {data.success}")
+    # Send to your billing API here
+
+async def main():
+    router = Router(strategy="round-robin", usage_callback=track_usage)
+    config = ProviderConfig(name="provider1", model="mock-normal")
+    router.add_provider(MockProvider(config))
+    
+    response = await router.route("What is Python?")
+    print(response)
+
+asyncio.run(main())
+```
+
+### HTTP POST Callback
+
+For remote billing APIs in multi-tenant deployments:
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import ProviderConfig, MockProvider
+
+async def main():
+    router = Router(
+        strategy="round-robin",
+        callback_url="https://api.example.com/usage",
+        tenant_id="tenant-123",
+        platform_key_id="key-456",
+    )
+    config = ProviderConfig(name="provider1", model="mock-normal")
+    router.add_provider(MockProvider(config))
+    
+    response = await router.route("What is Python?")
+    print(response)
+
+asyncio.run(main())
+```
+
+**Payload Format** (JSON, snake_case):
+
+```json
+{
+  "provider": "gigachat",
+  "model": "GigaChat-Pro",
+  "prompt_tokens": 42,
+  "completion_tokens": 128,
+  "total_tokens": 170,
+  "cost": 3.40,
+  "latency_ms": 1234.56,
+  "success": true,
+  "streaming": false,
+  "timestamp": "2026-01-12T15:30:00.000000Z",
+  "tenant_id": "tenant-123",
+  "platform_key_id": "key-456"
+}
+```
+
+**Features:**
+- ✅ Automatic tracking for all requests (success and failure)
+- ✅ Full fallback support (callback invoked for each provider attempt)
+- ✅ Streaming support (`route()` and `route_stream()`)
+- ✅ Fail-silent behavior (callback errors don't disrupt requests)
+- ✅ Comprehensive usage data (tokens, cost, latency, success status)
+
+**Note:** You cannot specify both `usage_callback` and `callback_url` at the same time. Choose one based on your use case.
+
 ## Streaming Support
 
 Multi-LLM Orchestrator now supports streaming responses, allowing you to receive text chunks incrementally as they are generated. This is especially useful for real-time applications and improved user experience.

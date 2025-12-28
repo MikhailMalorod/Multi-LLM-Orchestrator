@@ -13,7 +13,7 @@ __version__ = "0.7.5"
 __author__ = "Multi-LLM Orchestrator Contributors"
 
 from .config import Config
-from .router import Router
+from .router import Router, UsageData, UsageCallback
 
 # Backward compatibility
 LLMRouter = Router
@@ -22,7 +22,14 @@ LLMRouter = Router
 try:
     from .langchain import MultiLLMOrchestrator
 
-    __all__ = ["Router", "LLMRouter", "Config", "MultiLLMOrchestrator"]
+    __all__ = [
+        "Router",
+        "LLMRouter",
+        "Config",
+        "UsageData",
+        "UsageCallback",
+        "MultiLLMOrchestrator",
+    ]
 except ImportError:
     # langchain-core not installed, skip MultiLLMOrchestrator export
-    __all__ = ["Router", "LLMRouter", "Config"]
+    __all__ = ["Router", "LLMRouter", "Config", "UsageData", "UsageCallback"]

@@ -4,7 +4,8 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from .metrics import ProviderMetrics
@@ -15,6 +16,57 @@ from .tokenization import count_tokens
 
 # Valid routing strategies
 VALID_STRATEGIES = ["round-robin", "random", "first-available", "best-available"]
+
+
+@dataclass
+class UsageData:
+    """Usage data for billing and analytics.
+
+    This dataclass contains comprehensive usage information for each
+    LLM request, suitable for billing APIs and analytics platforms.
+
+    Attributes:
+        provider_name: Provider identifier (e.g., "gigachat", "yandexgpt")
+        model: Model name or version (e.g., "GigaChat-Pro")
+        prompt_tokens: Number of tokens in the prompt
+        completion_tokens: Number of tokens in the completion
+        total_tokens: Total tokens (prompt + completion)
+        cost: Cost in RUB for this request
+        latency_ms: Request latency in milliseconds
+        success: Whether the request succeeded
+        streaming: Whether this was a streaming request
+        error_type: Exception type name if request failed (e.g., "TimeoutError")
+        timestamp: UTC timestamp when request completed
+
+    Example:
+        >>> data = UsageData(
+        ...     provider_name="gigachat",
+        ...     model="GigaChat-Pro",
+        ...     prompt_tokens=42,
+        ...     completion_tokens=128,
+        ...     total_tokens=170,
+        ...     cost=3.40,
+        ...     latency_ms=1234.56,
+        ...     success=True,
+        ...     streaming=False,
+        ... )
+    """
+
+    provider_name: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost: float
+    latency_ms: float
+    success: bool
+    streaming: bool
+    error_type: str | None = None
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+# Type alias for usage callback
+UsageCallback = Callable[[UsageData], Awaitable[None]]
 
 
 class Router:
@@ -60,7 +112,14 @@ class Router:
         ```
     """
 
-    def __init__(self, strategy: str = "round-robin") -> None:
+    def __init__(
+        self,
+        strategy: str = "round-robin",
+        usage_callback: UsageCallback | None = None,
+        callback_url: str | None = None,
+        tenant_id: str | None = None,
+        platform_key_id: str | None = None,
+    ) -> None:
         """Initialize the router with a routing strategy.
 
         Args:
@@ -69,9 +128,21 @@ class Router:
                 - "random": Select a random provider from available providers
                 - "first-available": Select the first healthy provider
                 - "best-available": Select the healthiest provider with lowest latency
+            usage_callback: Optional callback function for usage tracking.
+                Receives UsageData instance after each request. Useful for
+                in-process billing, analytics, or logging. Mutually exclusive
+                with callback_url.
+            callback_url: Optional HTTP endpoint for usage tracking via POST.
+                Useful for remote billing APIs in multi-tenant deployments.
+                Mutually exclusive with usage_callback.
+            tenant_id: Optional tenant identifier for HTTP callbacks.
+                Included in POST payload if provided.
+            platform_key_id: Optional platform key identifier for HTTP callbacks.
+                Useful for BYOK (Bring Your Own Key) cost attribution.
 
         Raises:
             ValueError: If the provided strategy is not valid
+            ValueError: If both usage_callback and callback_url are specified
 
         Example:
             ```python
@@ -83,6 +154,17 @@ class Router:
 
             # First available healthy provider
             router = Router(strategy="first-available")
+
+            # With Python callback
+            async def track_usage(data: UsageData) -> None:
+                print(f"Cost: {data.cost} RUB")
+            router = Router(usage_callback=track_usage)
+
+            # With HTTP POST callback
+            router = Router(
+                callback_url="https://api.example.com/usage",
+                tenant_id="tenant-123",
+            )
             ```
         """
         # Validate strategy
@@ -92,11 +174,25 @@ class Router:
                 f"Must be one of {VALID_STRATEGIES}"
             )
 
+        # Validate callback configuration
+        if usage_callback and callback_url:
+            raise ValueError(
+                "Cannot specify both 'usage_callback' and 'callback_url'. "
+                "Use 'usage_callback' for in-process Python callbacks, "
+                "or 'callback_url' for remote HTTP POST callbacks."
+            )
+
         self.strategy = strategy
         self.providers: list[BaseProvider] = []
         self.metrics: dict[str, ProviderMetrics] = {}
         self._current_index: int = 0
         self.logger = logging.getLogger("orchestrator.router")
+
+        # Usage tracking configuration
+        self.usage_callback = usage_callback
+        self.callback_url = callback_url
+        self.tenant_id = tenant_id
+        self.platform_key_id = platform_key_id
 
         # Prometheus exporter (v0.7.0+, not started by default)
         self._prometheus_exporter: PrometheusExporter | None = None
@@ -296,6 +392,111 @@ class Router:
         else:
             self.logger.warning("llm_request_failed", extra=extra)
 
+    async def _invoke_usage_callback(
+        self,
+        provider_name: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost: float,
+        latency_ms: float,
+        success: bool,
+        streaming: bool,
+        error_type: str | None = None,
+    ) -> None:
+        """Invoke usage callback (Python function or HTTP POST).
+
+        This method invokes the configured usage callback with request
+        usage data. Supports two callback types:
+
+        1. Python callback (usage_callback): Calls an async Python function
+           with UsageData instance. Useful for in-process analytics.
+
+        2. HTTP POST callback (callback_url): POSTs usage data as JSON to
+           a remote endpoint. Useful for remote billing APIs.
+
+        Errors in callbacks are logged but do not disrupt the main request
+        flow (fail-silent behavior).
+
+        Args:
+            provider_name: Provider identifier (e.g., "gigachat")
+            model: Model name or version
+            prompt_tokens: Number of tokens in prompt
+            completion_tokens: Number of tokens in completion
+            cost: Cost in RUB
+            latency_ms: Request latency in milliseconds
+            success: Whether the request succeeded
+            streaming: Whether this was a streaming request
+            error_type: Exception type name if request failed
+
+        Example:
+            >>> await self._invoke_usage_callback(
+            ...     provider_name="gigachat",
+            ...     model="GigaChat-Pro",
+            ...     prompt_tokens=42,
+            ...     completion_tokens=128,
+            ...     cost=3.40,
+            ...     latency_ms=1234.56,
+            ...     success=True,
+            ...     streaming=False,
+            ... )
+        """
+        total_tokens = prompt_tokens + completion_tokens
+
+        # Option 1: Python callback
+        if self.usage_callback:
+            try:
+                usage_data = UsageData(
+                    provider_name=provider_name,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    cost=cost,
+                    latency_ms=latency_ms,
+                    success=success,
+                    streaming=streaming,
+                    error_type=error_type,
+                )
+                await self.usage_callback(usage_data)
+            except Exception as e:
+                # Fail silently - callback errors should not disrupt requests
+                self.logger.warning(f"Usage callback failed: {e}")
+
+        # Option 2: HTTP POST callback
+        elif self.callback_url:
+            try:
+                import httpx
+
+                # Build payload (snake_case for consistency with Python)
+                payload = {
+                    "provider": provider_name,
+                    "model": model,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "cost": cost,
+                    "latency_ms": latency_ms,
+                    "success": success,
+                    "streaming": streaming,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+
+                # Add optional context fields
+                if self.tenant_id:
+                    payload["tenant_id"] = self.tenant_id
+                if self.platform_key_id:
+                    payload["platform_key_id"] = self.platform_key_id
+                if error_type:
+                    payload["error_type"] = error_type
+
+                # POST to callback URL (5 second timeout)
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(self.callback_url, json=payload)
+            except Exception as e:
+                # Fail silently - callback errors should not disrupt requests
+                self.logger.warning(f"HTTP callback failed: {e}")
+
     async def route(
         self,
         prompt: str,
@@ -401,6 +602,18 @@ class Router:
                     cost=cost,
                 )
 
+                # Invoke usage callback (success)
+                await self._invoke_usage_callback(
+                    provider_name=provider.config.name,
+                    model=provider.config.model or "",
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost=cost,
+                    latency_ms=latency_ms,
+                    success=True,
+                    streaming=False,
+                )
+
                 self.logger.info(
                     f"Success with provider: {provider.config.name}"
                 )
@@ -425,6 +638,19 @@ class Router:
                     latency_ms=latency_ms,
                     streaming=False,
                     success=False,
+                    error_type=type(e).__name__,
+                )
+
+                # Invoke usage callback (error)
+                await self._invoke_usage_callback(
+                    provider_name=provider.config.name,
+                    model=provider.config.model or "",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    cost=0.0,
+                    latency_ms=latency_ms,
+                    success=False,
+                    streaming=False,
                     error_type=type(e).__name__,
                 )
 
@@ -757,6 +983,18 @@ class Router:
                         cost=cost,
                     )
 
+                    # Invoke usage callback (success, streaming)
+                    await self._invoke_usage_callback(
+                        provider_name=provider.config.name,
+                        model=provider.config.model or "",
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cost=cost,
+                        latency_ms=latency_ms,
+                        success=True,
+                        streaming=True,
+                    )
+
                     self.logger.info(
                         f"Success with provider: {provider.config.name}"
                     )
@@ -782,6 +1020,19 @@ class Router:
                         latency_ms=latency_ms,
                         streaming=True,
                         success=False,
+                        error_type=type(stream_error).__name__,
+                    )
+
+                    # Invoke usage callback (error, streaming)
+                    await self._invoke_usage_callback(
+                        provider_name=provider.config.name,
+                        model=provider.config.model or "",
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        cost=0.0,
+                        latency_ms=latency_ms,
+                        success=False,
+                        streaming=True,
                         error_type=type(stream_error).__name__,
                     )
 
