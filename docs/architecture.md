@@ -14,6 +14,7 @@ The `Router` is the central component that manages provider selection and reques
 - Provider health checking
 - Performance metrics tracking (latency, success/failure rates, health status)
 - Request logging and error handling
+- Zero-downtime provider updates (v0.7.5+)
 
 **Location:** `src/orchestrator/router.py`
 
@@ -28,6 +29,37 @@ router.add_provider(MockProvider(config))
 
 response = await router.route("Hello, world!")
 ```
+
+#### Provider Management
+
+**Adding Providers:**
+```python
+router.add_provider(provider)  # Adds a new provider instance
+```
+
+**Updating Providers (v0.7.5+):**
+The `update_providers()` method allows zero-downtime updates of the provider list without recreating the Router instance. Active requests continue on old providers, while new requests use the updated provider list.
+
+```python
+# Basic update (resets all metrics)
+await router.update_providers([new_provider1, new_provider2])
+
+# Preserve metrics for matching provider names
+await router.update_providers([new_provider1], preserve_metrics=True)
+```
+
+**Features:**
+- **Zero-downtime**: Point-in-time swap semantics - active requests complete on old providers
+- **Metrics preservation**: Optional `preserve_metrics` parameter to keep metrics for providers with matching names
+- **Validation**: Automatically validates empty list and duplicate provider names
+- **Model change detection**: Logs WARNING if provider model changes when preserving metrics
+- **Atomic swap**: Provider list and metrics are updated atomically
+- **Round-robin reset**: Automatically resets round-robin index after update
+
+**Use Cases:**
+- API key rotation without service interruption
+- Managed→BYOK migrations
+- Dynamic configuration updates in production
 
 ### BaseProvider
 
@@ -268,7 +300,13 @@ print(provider1_metrics.health_status)  # "healthy", "degraded", or "unhealthy"
 
 ### Token-Based Metrics
 
-**Note:** Token-aware metrics (token count, tokens/s, cost calculation) are **not yet implemented** in v0.6.0. This is intentionally deferred to future releases (v0.7.0+) to focus on core latency and health tracking first.
+Token-aware metrics are available since v0.7.0:
+- **Token Tracking**: `total_prompt_tokens`, `total_completion_tokens`, `total_tokens` (computed property)
+- **Cost Estimation**: `total_cost` in RUB (Russian Rubles)
+- **Automatic Tracking**: Tokens are counted automatically in `route()` and `route_stream()`
+- **Prometheus Integration**: Token metrics are exported via `/metrics` endpoint
+
+See [Observability Guide](observability.md) for detailed information.
 
 ## See Also
 
