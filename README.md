@@ -292,6 +292,48 @@ asyncio.run(main())
 
 The Router tracks performance metrics for each provider (latency, success rate, error rate) and uses this data to make intelligent routing decisions. Providers with high error rates or degraded latency are automatically deprioritized.
 
+## Zero-downtime Provider Updates
+
+Update providers without recreating Router instance:
+
+```python
+import asyncio
+from orchestrator import Router
+from orchestrator.providers import GigaChatProvider, YandexGPTProvider, ProviderConfig
+
+async def main():
+    router = Router(strategy="best-available")
+    
+    # Add initial providers
+    router.add_provider(GigaChatProvider(ProviderConfig(
+        name="gigachat", api_key="key1", model="GigaChat"
+    )))
+    
+    # ... later, update providers without downtime ...
+    
+    # Reset metrics (default)
+    await router.update_providers([
+        GigaChatProvider(ProviderConfig(name="gigachat", api_key="new_key", model="GigaChat-Pro")),
+        YandexGPTProvider(ProviderConfig(name="yandexgpt", api_key="key2", folder_id="folder", model="yandexgpt/latest"))
+    ])
+    
+    # Preserve metrics for matching provider names
+    await router.update_providers([new_gigachat], preserve_metrics=True)
+
+asyncio.run(main())
+```
+
+**Features:**
+- Zero-downtime: Active requests complete on old providers
+- Optional metrics preservation
+- Validation (empty list, duplicate names)
+- Model change detection
+
+**Use Cases:**
+- API key rotation
+- Managed→BYOK migrations
+- Dynamic configuration updates
+
 ## Run the Demo
 
 See the routing strategies and fallback mechanisms in action:
