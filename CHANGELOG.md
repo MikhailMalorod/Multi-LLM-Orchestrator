@@ -5,6 +5,27 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2025-12-28
+
+### Added
+- `Router.update_providers()` method for zero-downtime provider updates
+  - Optional `preserve_metrics` parameter to preserve metrics for matching provider names
+  - Validation for empty list and duplicate provider names
+  - Model change detection with WARNING log
+  - Atomic swap with round-robin index reset
+- 8 comprehensive tests covering all edge cases
+
+### Fixed
+- Race condition in `route()` and `route_stream()`: safe metrics access with on-the-fly creation
+- Active requests now complete successfully during provider updates
+
+### Changed
+- Improved metrics reliability during provider updates
+
+**Use Case:** Platform SaaS (Managed→BYOK migrations, API key rotation)
+
+**Closes:** #5
+
 ## [0.7.4] - 2024-12-24
 
 ### 🐛 Bug Fixes
