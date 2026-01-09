@@ -74,7 +74,7 @@ class TestGigaChatProviderOAuth2:
         provider = GigaChatProvider(config)
 
         with pytest.raises(AuthenticationError, match="Invalid authorization key"):
-            await provider._ensure_access_token()
+            await provider.get_access_token()
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_expiration(self, httpx_mock: pytest_httpx.HTTPXMock) -> None:

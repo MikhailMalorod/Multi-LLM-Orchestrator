@@ -308,6 +308,55 @@ Token-aware metrics are available since v0.7.0:
 
 See [Observability Guide](observability.md) for detailed information.
 
+### Usage Tracking Callbacks (v0.7.6+)
+
+Router supports usage tracking callbacks for billing and analytics integration. Two callback types are available:
+
+**1. Python Callback:**
+```python
+from orchestrator import Router, UsageData
+
+async def track_usage(data: UsageData) -> None:
+    """Send usage data to billing API."""
+    print(f"Cost: {data.cost} RUB, Tokens: {data.total_tokens}")
+
+router = Router(strategy="round-robin", usage_callback=track_usage)
+```
+
+**2. HTTP POST Callback:**
+```python
+router = Router(
+    strategy="round-robin",
+    callback_url="https://api.example.com/usage",
+    tenant_id="tenant-123",
+    platform_key_id="key-456",
+)
+```
+
+**UsageData Fields:**
+- `provider_name`: Provider identifier (e.g., "gigachat")
+- `model`: Model name or version
+- `prompt_tokens`, `completion_tokens`, `total_tokens`: Token counts
+- `cost`: Cost in RUB
+- `latency_ms`: Request latency in milliseconds
+- `success`: Whether the request succeeded
+- `streaming`: Whether this was a streaming request
+- `error_type`: Exception type name if request failed
+- `timestamp`: UTC timestamp when request completed
+
+**Features:**
+- **Fail-silent behavior**: Callback errors are logged but don't disrupt requests
+- **Full fallback support**: Callback invoked for each provider attempt in fallback chain
+- **Streaming support**: Works with both `route()` and `route_stream()`
+- **Mutual exclusivity**: Cannot specify both `usage_callback` and `callback_url` simultaneously
+
+**Integration Points:**
+- Callback invoked after successful request completion
+- Callback invoked after failed request (with error_type)
+- Callback invoked for each provider in fallback scenario (complete audit trail)
+
+See [README - Usage Tracking](../README.md#usage-tracking) for detailed examples.
+
 ## See Also
 
 - [Router Implementation](src/orchestrator/router.py)

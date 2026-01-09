@@ -5,6 +5,31 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-01-17
+
+### Added
+- **API Key Validators** module (`orchestrator.validators`)
+  - `GigaChatValidator` for validating GigaChat API keys with known scope
+  - `YandexGPTValidator` for validating YandexGPT IAM tokens and folder_id
+  - Structured error types (`ValidationResult`, `ErrorCode`)
+  - Support for `verify_ssl` parameter (GigaChat)
+  - Request ID extraction for YandexGPT errors
+  - Comprehensive test coverage (80%+)
+
+### Changed
+- Made `GigaChatProvider.get_access_token()` public (was `_get_access_token`)
+  - Enables validators to reuse OAuth2 authentication logic
+  - Maintains backward compatibility (internal method still works)
+
+### Documentation
+- Added "API Key Validation" section to README
+- Added `examples/validation_demo.py` with usage examples
+- Added Google-style docstrings to all validators
+
+### Notes
+- Scope auto-detection for GigaChat is planned for v0.8.1
+- Validators are designed for Platform SaaS use cases (key validation during onboarding)
+
 ## [0.7.6] - 2026-01-10
 
 ### Added

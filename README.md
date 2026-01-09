@@ -3,8 +3,8 @@
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![PyPI](https://img.shields.io/pypi/v/multi-llm-orchestrator.svg)
-![Coverage](https://img.shields.io/badge/coverage-81%25-brightgreen.svg)
-![Tests](https://img.shields.io/badge/tests-203%20passed-success.svg)
+![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-241%20passed-success.svg)
 
 ## Architecture
 
@@ -626,6 +626,72 @@ for chunk in llm._stream("What is Python?"):
 ### Streaming Examples
 
 See [streaming_demo.py](examples/streaming_demo.py) and [langchain_streaming_demo.py](examples/langchain_streaming_demo.py) for complete examples.
+
+## API Key Validation
+
+Multi-LLM-Orchestrator provides validators for checking API keys before usage. This is especially useful for Platform SaaS applications where users need to validate their API keys during onboarding.
+
+### Quick Start
+
+```python
+from orchestrator.validators import GigaChatValidator, YandexGPTValidator, ErrorCode
+
+# GigaChat (with known scope)
+validator = GigaChatValidator(verify_ssl=False)  # For Russian CA
+result = await validator.validate(
+    api_key="YOUR_API_KEY",
+    scope="GIGACHAT_API_PERS"
+)
+
+if result.valid:
+    print(f"✅ Valid! Scope: {result.details['scope']}")
+elif result.error_code == ErrorCode.SCOPE_MISMATCH:
+    print(f"❌ Scope mismatch: {result.message}")
+elif result.error_code == ErrorCode.RATE_LIMIT_EXCEEDED:
+    print(f"⏳ Rate limited, retry after {result.retry_after}s")
+else:
+    print(f"❌ Error: {result.error_code.value} - {result.message}")
+
+# YandexGPT
+validator = YandexGPTValidator()
+result = await validator.validate(
+    api_key="YOUR_IAM_TOKEN",
+    folder_id="YOUR_FOLDER_ID"
+)
+
+if result.valid:
+    print("✅ Valid!")
+elif result.error_code == ErrorCode.PERMISSION_DENIED:
+    print(f"❌ No access to folder_id: {result.details['folder_id']}")
+    print(f"Request ID: {result.details.get('request_id')}")
+```
+
+### Supported Providers
+
+- **GigaChat**: Validates key with known scope (v0.8.0)
+  - Requires `scope` parameter (GIGACHAT_API_PERS/B2B/CORP)
+  - Supports `verify_ssl` parameter for Russian CA certificates
+  - Returns `SCOPE_MISMATCH` if scope doesn't match key type
+
+- **YandexGPT**: Validates IAM token and folder_id permissions (v0.8.0)
+  - Requires `folder_id` parameter
+  - Uses minimal request (maxTokens: 1) for cost efficiency
+  - Extracts request_id from error responses for support
+
+### Error Codes
+
+- `SUCCESS`: Key is valid
+- `INVALID_API_KEY`: 401 Unauthorized (invalid or expired key)
+- `SCOPE_MISMATCH`: GigaChat scope conflict (400, code:7)
+- `PERMISSION_DENIED`: YandexGPT folder_id access denied (403)
+- `RATE_LIMIT_EXCEEDED`: 429 Too Many Requests (includes `retry_after`)
+- `NETWORK_TIMEOUT`: Request timeout (default: 10s)
+- `PROVIDER_ERROR`: 500+ Server error
+- `VALIDATION_ERROR`: Unexpected error during validation
+
+### Examples
+
+See [validation_demo.py](examples/validation_demo.py) for complete examples.
 
 ## Provider Metrics & Monitoring
 

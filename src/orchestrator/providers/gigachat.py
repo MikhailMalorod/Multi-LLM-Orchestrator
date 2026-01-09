@@ -164,8 +164,8 @@ class GigaChatProvider(BaseProvider):
             f"scope={config.scope or self.DEFAULT_SCOPE}"
         )
 
-    async def _ensure_access_token(self) -> str:
-        """Ensure valid access token, refresh if needed.
+    async def get_access_token(self) -> str:
+        """Get or refresh OAuth2 access token.
 
         This method implements thread-safe OAuth2 token management:
         1. Checks if current token is valid (with 60s buffer before expiration)
@@ -186,7 +186,7 @@ class GigaChatProvider(BaseProvider):
             ```python
             # Token is automatically managed, no need to call directly
             # But can be used for explicit token refresh:
-            token = await provider._ensure_access_token()
+            token = await provider.get_access_token()
             ```
         """
         async with self._token_lock:
@@ -259,6 +259,135 @@ class GigaChatProvider(BaseProvider):
                     raise ProviderError(f"OAuth2 token request failed: {e}") from e
             # ✅ httpx cleanup executes here
 
+    @classmethod
+    async def validate_api_key(
+        cls,
+        api_key: str,
+        scope: str = "GIGACHAT_API_PERS",
+        verify_ssl: bool = True,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Validate GigaChat API key (class method for validators).
+        
+        This method performs OAuth2 authentication and validates
+        the API key by checking access to the /api/v1/models endpoint.
+        
+        Args:
+            api_key: Authorization key (credentials)
+            scope: GigaChat scope (GIGACHAT_API_PERS/B2B/CORP)
+            verify_ssl: Verify SSL certificates (default: True)
+            timeout: Request timeout in seconds (default: 10.0)
+        
+        Returns:
+            dict with keys:
+                - "valid": bool - True if key is valid
+                - "access_token": str - OAuth2 access token (if valid)
+                - "error": Optional[dict] - Error details (if invalid)
+                    - "message": str - Error message
+                    - "http_status": int - HTTP status code
+                    - "code": Optional[int] - GigaChat error code
+        
+        Raises:
+            ValueError: If api_key or scope is empty
+            httpx.TimeoutException: If request times out
+        """
+        if not api_key:
+            raise ValueError("api_key cannot be empty")
+        if not scope:
+            raise ValueError("scope cannot be empty")
+        
+        # Step 1: Get OAuth2 access token
+        oauth_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+        
+        async with httpx.AsyncClient(timeout=timeout, verify=verify_ssl) as client:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "RqUID": str(uuid.uuid4()),
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            data = {"scope": scope}
+            
+            try:
+                response = await client.post(oauth_url, headers=headers, data=data)
+                
+                if response.status_code == 401:
+                    return {
+                        "valid": False,
+                        "access_token": None,
+                        "error": {
+                            "message": "Invalid authorization key",
+                            "http_status": 401,
+                            "code": None,
+                        },
+                    }
+                
+                response.raise_for_status()
+                token_data = response.json()
+                access_token = token_data["access_token"]
+                
+                # Step 2: Validate access to /api/v1/models
+                models_url = "https://gigachat.devices.sberbank.ru/api/v1/models"
+                models_response = await client.get(
+                    models_url,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                
+                if models_response.status_code == 200:
+                    return {
+                        "valid": True,
+                        "access_token": access_token,
+                        "error": None,
+                    }
+                
+                # Handle models endpoint errors
+                if models_response.status_code == 400:
+                    error_data = models_response.json()
+                    if error_data.get("code") == 7:  # scope mismatch
+                        return {
+                            "valid": False,
+                            "access_token": None,
+                            "error": {
+                                "message": f"Scope mismatch: provided '{scope}' but key requires different scope",
+                                "http_status": 400,
+                                "code": 7,
+                            },
+                        }
+                
+                if models_response.status_code == 429:
+                    return {
+                        "valid": False,
+                        "access_token": None,
+                        "error": {
+                            "message": "Rate limit exceeded",
+                            "http_status": 429,
+                            "code": None,
+                        },
+                    }
+                
+                # Other errors
+                return {
+                    "valid": False,
+                    "access_token": None,
+                    "error": {
+                        "message": models_response.text or f"HTTP {models_response.status_code}",
+                        "http_status": models_response.status_code,
+                        "code": None,
+                    },
+                }
+                
+            except httpx.TimeoutException:
+                raise
+            except Exception as e:
+                return {
+                    "valid": False,
+                    "access_token": None,
+                    "error": {
+                        "message": str(e),
+                        "http_status": 500,
+                        "code": None,
+                    },
+                }
+
     async def generate(
         self, prompt: str, params: GenerationParams | None = None
     ) -> str:
@@ -306,7 +435,7 @@ class GigaChatProvider(BaseProvider):
             ```
         """
         # Ensure valid access token before making request
-        await self._ensure_access_token()
+        await self.get_access_token()
 
         # Prepare API endpoint URL
         base_url = self.config.base_url or self.DEFAULT_BASE_URL
@@ -362,7 +491,7 @@ class GigaChatProvider(BaseProvider):
                         self._access_token = None
                         self._token_expires_at = None
                     # Refresh token
-                    await self._ensure_access_token()
+                    await self.get_access_token()
                     # Update headers with new token and new RqUID
                     headers["Authorization"] = f"Bearer {self._access_token}"
                     headers["RqUID"] = str(uuid.uuid4())
@@ -420,7 +549,7 @@ class GigaChatProvider(BaseProvider):
         """
         try:
             # Try to get access token (validates OAuth2 and API availability)
-            await self._ensure_access_token()
+            await self.get_access_token()
 
             self.logger.debug("Health check passed: OAuth2 token obtained")
             return True
@@ -596,7 +725,7 @@ class GigaChatProvider(BaseProvider):
             "data: {...}" lines. The stream ends when "data: [DONE]" is received.
         """
         # Ensure valid access token before making request
-        await self._ensure_access_token()
+        await self.get_access_token()
 
         # Prepare API endpoint URL
         base_url = self.config.base_url or self.DEFAULT_BASE_URL
@@ -654,7 +783,7 @@ class GigaChatProvider(BaseProvider):
                             self._access_token = None
                             self._token_expires_at = None
                         # Refresh token
-                        await self._ensure_access_token()
+                        await self.get_access_token()
                         # Update headers with new token and new RqUID
                         headers["Authorization"] = f"Bearer {self._access_token}"
                         headers["RqUID"] = str(uuid.uuid4())
