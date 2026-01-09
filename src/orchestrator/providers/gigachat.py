@@ -321,6 +321,17 @@ class GigaChatProvider(BaseProvider):
                         },
                     }
                 
+                if response.status_code == 429:
+                    return {
+                        "valid": False,
+                        "access_token": None,
+                        "error": {
+                            "message": "Rate limit exceeded",
+                            "http_status": 429,
+                            "code": None,
+                        },
+                    }
+                
                 response.raise_for_status()
                 token_data = response.json()
                 access_token = token_data["access_token"]

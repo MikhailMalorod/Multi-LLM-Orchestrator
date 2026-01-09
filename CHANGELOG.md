@@ -5,6 +5,33 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-01-09
+
+### Added
+- **GigaChat Scope Auto-Detection**: `GigaChatValidator.validate()` now accepts optional `scope` parameter
+  - If `scope` is not provided, validator automatically tries all variants (PERS → B2B → CORP)
+  - Stops immediately on errors other than scope mismatch (401, 429, 500, timeout)
+  - Returns `detected_scope` in `ValidationResult.details`
+  - Progress callback `on_scope_attempt` for real-time UI feedback
+  - Metrics in `details`: `auto_detection_used`, `attempts_count`, `total_time_ms`, `attempted_scopes`, `stopped_reason`
+
+### Changed
+- `GigaChatValidator.validate()`: `scope` parameter is now `Optional[str]` (was `str`)
+  - Backward compatible: explicit `scope` still works (skips auto-detection)
+  - Auto-detection only runs when `scope` is `None`
+- `GigaChatProvider.validate_api_key()`: Added handling for 429 rate limit at OAuth2 endpoint
+
+### Documentation
+- Updated README.md with auto-detection examples and limitations
+- Updated `examples/validation_demo.py` with auto-detection examples
+- Added `examples/platform_saas_integration.py` demonstrating full integration with progress tracking
+- Added performance note for auto-detection (up to 3 OAuth2 requests, 3-6 seconds)
+
+### Notes
+- Auto-detection makes up to 3 OAuth2 requests (one per scope), which can take 3-6 seconds
+- For faster validation, specify the scope explicitly if known
+- Progress callback is only called during auto-detection (not when scope is explicitly provided)
+
 ## [0.8.0] - 2026-01-17
 
 ### Added

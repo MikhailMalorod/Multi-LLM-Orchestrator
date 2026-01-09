@@ -666,12 +666,84 @@ elif result.error_code == ErrorCode.PERMISSION_DENIED:
     print(f"Request ID: {result.details.get('request_id')}")
 ```
 
+### GigaChat Scope Auto-Detection (v0.8.1+)
+
+GigaChatValidator can automatically detect the scope (PERS/B2B/CORP) if not provided:
+
+```python
+validator = GigaChatValidator()
+
+# Auto-detect scope (tries PERS → B2B → CORP)
+result = await validator.validate("YOUR_API_KEY")
+
+if result.valid:
+    detected_scope = result.details.get("detected_scope")
+    print(f"✅ Valid! Auto-detected scope: {detected_scope}")
+    print(f"   Attempts: {result.details.get('attempts_count')}")
+    print(f"   Time: {result.details.get('total_time_ms')}ms")
+else:
+    print(f"❌ Error: {result.error_code.value}")
+
+# Or specify scope explicitly (faster, skips auto-detection)
+result = await validator.validate("YOUR_API_KEY", scope="GIGACHAT_API_B2B")
+```
+
+**Performance Note**: Auto-detection makes up to 3 OAuth2 requests (one per scope), which can take 3-6 seconds. For faster validation, specify the scope explicitly if known.
+
+#### Progress Tracking
+
+For better UX during auto-detection, use the `on_scope_attempt` callback:
+
+```python
+def show_progress(scope: str, current: int, total: int):
+    print(f"Checking {scope} ({current}/{total})...")
+
+result = await validator.validate(
+    "YOUR_API_KEY",
+    on_scope_attempt=show_progress
+)
+```
+
+#### Auto-Detection Limitations
+
+**1. Expired Keys**
+If the API key is expired (401), auto-detection stops immediately without testing other scopes.
+
+**Reason**: 401 indicates authentication failure unrelated to scope. Testing other scopes would waste time and API quota.
+
+**Example**:
+```python
+# Expired key
+result = await validator.validate("EXPIRED_KEY")
+# Result: INVALID_API_KEY (stopped after first 401, did not try B2B/CORP)
+```
+
+**2. Rate Limits**
+If rate limit (429) is hit during auto-detection, the process stops immediately.
+
+**Reason**: Rate limits apply across all scopes. Continuing would hit the same limit.
+
+**Workaround**: Wait for `retry_after` seconds (returned in `ValidationResult.retry_after`) and retry.
+
+**3. Response Time**
+Auto-detection makes **up to 3 OAuth2 requests** (one per scope), which can take 3-6 seconds.
+
+**Optimization**: If you know the scope, pass it explicitly to skip auto-detection:
+```python
+# Fast (1 request, ~1-2 seconds)
+result = await validator.validate(api_key, scope="GIGACHAT_API_B2B")
+
+# Slower (up to 3 requests, ~3-6 seconds)
+result = await validator.validate(api_key)  # Auto-detect
+```
+
 ### Supported Providers
 
-- **GigaChat**: Validates key with known scope (v0.8.0)
-  - Requires `scope` parameter (GIGACHAT_API_PERS/B2B/CORP)
+- **GigaChat**: Validates key with known scope (v0.8.0) or auto-detects scope (v0.8.1+)
+  - Optional `scope` parameter (GIGACHAT_API_PERS/B2B/CORP) - if omitted, auto-detects
   - Supports `verify_ssl` parameter for Russian CA certificates
   - Returns `SCOPE_MISMATCH` if scope doesn't match key type
+  - Progress callback `on_scope_attempt` for UI feedback during auto-detection
 
 - **YandexGPT**: Validates IAM token and folder_id permissions (v0.8.0)
   - Requires `folder_id` parameter

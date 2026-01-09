@@ -27,7 +27,7 @@ async def main():
     
     gc_validator = GigaChatValidator(verify_ssl=False)  # For Russian CA
     
-    # Example: Valid key
+    # Example 1: Known scope (fast, 1 request)
     # result = await gc_validator.validate(
     #     api_key="YOUR_GIGACHAT_KEY",
     #     scope="GIGACHAT_API_PERS"
@@ -40,6 +40,26 @@ async def main():
     #     print(f"   Message: {result.message}")
     #     if result.retry_after:
     #         print(f"   Retry after: {result.retry_after}s")
+    
+    # Example 2: Auto-detection (v0.8.1+, slower, up to 3 requests)
+    # def show_progress(scope: str, current: int, total: int):
+    #     print(f"   Checking {scope} ({current}/{total})...")
+    # 
+    # result = await gc_validator.validate(
+    #     api_key="YOUR_GIGACHAT_KEY",
+    #     on_scope_attempt=show_progress
+    # )
+    # 
+    # if result.valid:
+    #     detected_scope = result.details.get("detected_scope")
+    #     print(f"✅ Valid! Auto-detected scope: {detected_scope}")
+    #     print(f"   Attempts: {result.details.get('attempts_count')}")
+    #     print(f"   Time: {result.details.get('total_time_ms')}ms")
+    # else:
+    #     print(f"❌ Error: {result.error_code.value}")
+    #     if result.details.get("auto_detection_stopped"):
+    #         print(f"   Stopped reason: {result.details.get('stopped_reason')}")
+    #         print(f"   Attempted scopes: {result.details.get('attempted_scopes')}")
     
     print("(Uncomment code above and add your API key to test)")
     

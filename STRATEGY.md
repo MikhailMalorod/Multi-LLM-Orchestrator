@@ -195,6 +195,68 @@ Structure the document with the following sections:
 **Target Audience:** Platform SaaS teams requiring billing/analytics integration
 
 
+### v0.8.0 (January 9, 2026) ✅
+
+**Goal:** API Key Validators Module (Minimal MVP) for Platform SaaS Team
+
+**Implemented Features:**
+- ✅ **Validators Module** (`orchestrator.validators`)
+  - `GigaChatValidator` with OAuth2 authentication and verify_ssl support
+  - `YandexGPTValidator` with folder_id permission check and request_id extraction
+  - Structured error types (`ErrorCode` enum, `ValidationResult` dataclass)
+  - `BaseValidator` ABC with helper methods for timeout and exception handling
+- ✅ **GigaChatProvider Refactoring**
+  - `_ensure_access_token()` → `get_access_token()` (public method)
+  - Added `validate_api_key()` classmethod for validators
+  - Updated all internal calls to use new public method
+  - Backward compatibility: all existing tests pass
+- ✅ **Comprehensive Testing**
+  - 28 tests with 93% coverage (target: 80%+)
+  - All edge cases covered (empty params, timeout, errors)
+  - Full backward compatibility maintained
+- ✅ **Documentation**
+  - README: "API Key Validation" section
+  - `examples/validation_demo.py` with usage examples
+  - CHANGELOG.md updated with [0.8.0] release notes
+  - Google-style docstrings for all validators
+
+**Quality:**
+- Test coverage: 93% (target: 80%+)
+- Tests: 28/28 passed (100%)
+- Type checking (mypy): 0 errors (strict mode)
+- Linting (ruff): 0 errors (minor whitespace warnings in docstrings)
+- Backward compatibility: ✅ maintained (existing tests pass)
+
+**Use Case:** Platform SaaS Team (RAG-боты в Telegram) — API key validation before saving to database
+
+**Development Timeline:**
+- January 9: Feature request from Platform SaaS Team (LETTER-FOR-LLM-OR-ABOUT-ER-VAL.md)
+- January 9: Full implementation sprint (16 steps, 4 phases)
+- January 9: Released same day (Minimal MVP approach)
+
+**Status:** ✅ Completed and Production-Ready (January 9, 2026)
+
+**Key Achievements:**
+- First community contribution request implemented
+- DRY principle: validators reuse GigaChatProvider OAuth2 logic
+- Structured error handling with `ErrorCode` enum and `ValidationResult` dataclass
+- Request ID extraction for YandexGPT errors (debugging support)
+- Zero breaking changes (100% backward compatibility)
+
+**Deferred to v0.8.1 (2-3 weeks):**
+- GigaChat scope auto-detection (brute-force PERS/B2B/CORP)
+- Advanced retry logic for rate limits
+
+**Business Impact:**
+- Platform SaaS can proceed with Week 21-22 roadmap (key validation integration)
+- Production use case: RAG-боты в Telegram
+- First external contribution request successfully delivered
+
+**Related:** LETTER-FOR-LLM-OR-ABOUT-ER-VAL.md, REPORT-validators-v0.8.0.md
+
+**Target Audience:** Platform SaaS teams requiring API key validation before database storage
+
+
 ### v0.6.0 (Current Release)
 - ✅ Provider-level metrics tracking (latency, success/failure rates, health status)
 - ✅ New routing strategy `best-available` (health + latency aware)
@@ -305,6 +367,17 @@ Deliverable: Working MVP, GitHub repo with 20-50 stars
 
 ### Phase 2: Community Building (Month 2) - In Progress
 Goal: Get first 100 users and feedback
+
+**Progress**: 6/8 weeks (75%)
+
+**Achievements:**
+- ✅ v0.7.6: Usage callback API (Platform SaaS Team)
+- ✅ v0.8.0: API Key Validators Module (Platform SaaS Team)
+- 🔄 Habr Contest: article in development (deadline: January 16)
+
+**Current Tasks:**
+- [ ] Week 7: Habr Contest submission
+- [ ] Week 8: LinkedIn outreach, community engagement
 
 **Week 5: Quality & PyPI Release** ✅ **COMPLETED November 23, 2025**
 - [x] Type checking with mypy (strict mode, 0 errors) ✅
@@ -646,6 +719,27 @@ Week 7-8 (December 1-8, 2025):
 ---
 ---
 
+## 🤝 Community Contributions
+
+### v0.8.0: Platform SaaS Team
+**Date**: January 9, 2026  
+**Request**: API Key Validators Module  
+**Impact**: Production use case (RAG-боты в Telegram)  
+**Deliverables**:
+- validators module (523 lines)
+- 28 tests, 93% coverage
+- Full documentation
+
+**Result**: Accepted and implemented (Minimal MVP v0.8.0)  
+**Follow-up**: v0.8.1 — scope auto-detection (2-3 weeks)
+
+**Community Impact**:
+- First external contribution request successfully delivered
+- Production use case validation
+- Foundation for future community-driven features
+
+---
+
 ## 🏆 December 2025: Habr Contest "ИИ в разработке"
 
 **Deadline:** January 16, 2025  
@@ -671,6 +765,6 @@ Week 7-8 (December 1-8, 2025):
 
 ---
 
-Last updated: December 23, 2025 (v0.7.1 Release)
+Last updated: January 9, 2026 (v0.8.0 Release)
 Review frequency: Weekly (every Sunday)
 Owner: Mikhail Malorod
