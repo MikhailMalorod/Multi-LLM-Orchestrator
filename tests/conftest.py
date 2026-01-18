@@ -115,3 +115,74 @@ def router_with_providers(router_round_robin: Router) -> Router:
         router_round_robin.add_provider(MockProvider(config))
     return router_round_robin
 
+
+# ============================================================================
+# Retrieval module fixtures (for integration tests)
+# ============================================================================
+
+try:
+    from langchain_community.embeddings import FakeEmbeddings
+    from langchain_community.vectorstores import FAISS
+    from langchain_core.documents import Document
+
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+
+
+@pytest.fixture(scope="session")
+def synthetic_faiss_index():
+    """Large synthetic FAISS index (1000 docs, 384-dim) for integration tests.
+
+    This fixture creates a FAISS index with 1000 synthetic documents using
+    FakeEmbeddings, which is fast (~50-100ms) and reproducible.
+
+    The fixture uses session scope, meaning it's created once for all
+    integration tests, significantly speeding up test execution.
+
+    Document structure:
+    - page_content: "Synthetic document {i} about topic {i % 10}. Additional..."
+    - metadata: {"id": i, "topic": i % 10, "group": i // 100}
+
+    This structure allows testing:
+    - Similarity search with various k values
+    - Metadata filtering (by id, topic, group)
+    - MMR search for diversity
+    - Concurrent queries on a realistic index size
+
+    Returns:
+        FAISS vectorstore with 1000 documents (384-dim embeddings)
+
+    Raises:
+        pytest.skip: If langchain-community not installed
+
+    Example:
+        >>> async def test_integration(synthetic_faiss_index):
+        ...     retriever = AsyncFAISSRetriever(synthetic_faiss_index)
+        ...     docs = await retriever.similarity_search("topic 5", k=10)
+        ...     assert len(docs) == 10
+    """
+    if not LANGCHAIN_AVAILABLE:
+        pytest.skip(
+            "langchain-community not installed. "
+            "Install with: pip install multi-llm-orchestrator[retrieval]"
+        )
+
+    # Use FakeEmbeddings for fast, reproducible embeddings
+    embeddings = FakeEmbeddings(size=384)
+
+    # Create 1000 synthetic documents
+    docs = [
+        Document(
+            page_content=(
+                f"Synthetic document {i} about topic {i % 10}. "
+                f"This document contains additional content to make it realistic. "
+                f"It belongs to group {i // 100} and has unique identifier {i}."
+            ),
+            metadata={"id": i, "topic": i % 10, "group": i // 100},
+        )
+        for i in range(1000)
+    ]
+
+    # Create FAISS index (~50-100ms for 1000 docs)
+    return FAISS.from_documents(docs, embeddings)
