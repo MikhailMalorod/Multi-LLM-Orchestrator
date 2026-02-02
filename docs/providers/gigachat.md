@@ -8,13 +8,38 @@ GigaChat is a large language model developed by Sber (Sberbank). The provider su
 
 ## Authentication
 
-GigaChat uses OAuth2 authentication:
+GigaChat uses OAuth2 authentication with Basic Authorization:
 
 1. **Authorization Key**: Obtain from [GigaChat Developer Portal](https://developers.sber.ru/)
-2. **OAuth2 Scope**: 
+   - In GigaChat Studio (Personal Cabinet), you receive a **ready-to-use Base64-encoded key**
+   - This key is the result of `base64(ClientID:ClientSecret)` encoding
+   - **Use this key directly** in `api_key` parameter (no additional encoding needed)
+
+2. **OAuth2 Flow**:
+   - Step 1: Provider sends `Authorization: Basic {api_key}` to OAuth2 endpoint
+   - Step 2: Receives `access_token` (valid for 30 minutes)
+   - Step 3: All Chat API requests use `Authorization: Bearer {access_token}`
+
+3. **OAuth2 Scope**:
    - `GIGACHAT_API_PERS` - Personal use
    - `GIGACHAT_API_CORP` - Corporate use
-3. **Automatic Token Refresh**: The provider automatically refreshes access tokens before expiration (30-minute validity)
+
+4. **Automatic Token Refresh**: The provider automatically refreshes access tokens before expiration
+
+### Key Format
+
+⚠️ **Important**: The `api_key` parameter expects a **Base64-encoded authorization key** from GigaChat Studio. Do NOT manually encode it — use the key exactly as provided in your Personal Cabinet.
+
+Example:
+
+```python
+# ✅ Correct: use the key from GigaChat Studio as-is
+api_key = "NzU2YTI4...(Base64 string from Personal Cabinet)"
+
+# ❌ Wrong: manually encoding ClientID:ClientSecret
+import base64
+api_key = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+```
 
 ## Configuration
 
@@ -141,6 +166,8 @@ The provider automatically manages OAuth2 tokens:
 
 ## See Also
 
+- [GigaChat API Documentation](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/gigachat-api)
+- [OAuth2 Token Endpoint](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-token)
 - [GigaChatProvider Implementation](../../src/orchestrator/providers/gigachat.py)
 - [Creating Custom Provider](custom_provider.md)
 - [Architecture Overview](../architecture.md)

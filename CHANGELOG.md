@@ -5,6 +5,32 @@ All notable changes to Multi-LLM Orchestrator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-02-02
+
+### Fixed
+
+- **GigaChat OAuth2 Authentication**: Fixed incorrect authorization header for OAuth2 endpoint
+  - Changed from `Authorization: Bearer {api_key}` to `Authorization: Basic {api_key}`
+  - Affects: `get_access_token()` and `validate_api_key()` methods
+  - Impact: **Critical** — blocks all GigaChat Chat API calls in production
+  - Backward compatible: ✅ Yes (internal OAuth2 logic only)
+  - Related: [Issue #10](https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues/10)
+
+### Documentation
+
+- **GigaChat Provider**: Clarified API key format in `docs/providers/gigachat.md`
+  - Added "Key Format" section with examples
+  - Updated "Authentication" section with OAuth2 flow details
+  - Added links to official GigaChat API documentation
+
+### Internal
+
+- Updated docstrings for `get_access_token()` and `validate_api_key()`
+- No changes to tests (httpx_mock doesn't verify headers)
+- All existing tests pass: 49/49 ✅
+
+***
+
 ## [0.9.0] - 2026-01-18
 
 ### Added

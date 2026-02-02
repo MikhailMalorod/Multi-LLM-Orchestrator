@@ -170,7 +170,11 @@ class GigaChatProvider(BaseProvider):
         This method implements thread-safe OAuth2 token management:
         1. Checks if current token is valid (with 60s buffer before expiration)
         2. If token is missing or expired, requests a new one via OAuth2 endpoint
+           using **Basic authentication** (api_key is Base64-encoded authorization key)
         3. Uses async lock to prevent concurrent token refresh requests
+
+        The OAuth2 endpoint requires `Authorization: Basic {api_key}` header,
+        where api_key is the Base64-encoded authorization key from GigaChat Studio.
 
         The token expiration time is stored in seconds (converted from milliseconds
         in the API response) for easier comparison with time.time().
@@ -208,9 +212,9 @@ class GigaChatProvider(BaseProvider):
                 timeout=self._timeout,
                 verify=self._verify_ssl
             ) as client:
-                # Prepare OAuth2 request
+                # Prepare OAuth2 request (Basic auth per GigaChat API docs)
                 headers = {
-                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Authorization": f"Basic {self.config.api_key}",
                     "RqUID": str(uuid.uuid4()),
                     "Content-Type": "application/x-www-form-urlencoded",
                 }
@@ -268,16 +272,17 @@ class GigaChatProvider(BaseProvider):
         timeout: float = 10.0,
     ) -> dict[str, Any]:
         """Validate GigaChat API key (class method for validators).
-        
-        This method performs OAuth2 authentication and validates
-        the API key by checking access to the /api/v1/models endpoint.
-        
+
+        This method performs OAuth2 authentication using **Basic authentication**
+        with the provided API key (Base64-encoded authorization key) and validates
+        access to the /api/v1/models endpoint.
+
         Args:
-            api_key: Authorization key (credentials)
+            api_key: Authorization key (Base64-encoded, from GigaChat Studio)
             scope: GigaChat scope (GIGACHAT_API_PERS/B2B/CORP)
             verify_ssl: Verify SSL certificates (default: True)
             timeout: Request timeout in seconds (default: 10.0)
-        
+
         Returns:
             dict with keys:
                 - "valid": bool - True if key is valid
@@ -286,7 +291,7 @@ class GigaChatProvider(BaseProvider):
                     - "message": str - Error message
                     - "http_status": int - HTTP status code
                     - "code": Optional[int] - GigaChat error code
-        
+
         Raises:
             ValueError: If api_key or scope is empty
             httpx.TimeoutException: If request times out
@@ -295,21 +300,21 @@ class GigaChatProvider(BaseProvider):
             raise ValueError("api_key cannot be empty")
         if not scope:
             raise ValueError("scope cannot be empty")
-        
+
         # Step 1: Get OAuth2 access token
         oauth_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-        
+
         async with httpx.AsyncClient(timeout=timeout, verify=verify_ssl) as client:
             headers = {
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Basic {api_key}",
                 "RqUID": str(uuid.uuid4()),
                 "Content-Type": "application/x-www-form-urlencoded",
             }
             data = {"scope": scope}
-            
+
             try:
                 response = await client.post(oauth_url, headers=headers, data=data)
-                
+
                 if response.status_code == 401:
                     return {
                         "valid": False,
@@ -320,7 +325,7 @@ class GigaChatProvider(BaseProvider):
                             "code": None,
                         },
                     }
-                
+
                 if response.status_code == 429:
                     return {
                         "valid": False,
@@ -331,25 +336,25 @@ class GigaChatProvider(BaseProvider):
                             "code": None,
                         },
                     }
-                
+
                 response.raise_for_status()
                 token_data = response.json()
                 access_token = token_data["access_token"]
-                
+
                 # Step 2: Validate access to /api/v1/models
                 models_url = "https://gigachat.devices.sberbank.ru/api/v1/models"
                 models_response = await client.get(
                     models_url,
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
-                
+
                 if models_response.status_code == 200:
                     return {
                         "valid": True,
                         "access_token": access_token,
                         "error": None,
                     }
-                
+
                 # Handle models endpoint errors
                 if models_response.status_code == 400:
                     error_data = models_response.json()
@@ -363,7 +368,7 @@ class GigaChatProvider(BaseProvider):
                                 "code": 7,
                             },
                         }
-                
+
                 if models_response.status_code == 429:
                     return {
                         "valid": False,
@@ -374,7 +379,7 @@ class GigaChatProvider(BaseProvider):
                             "code": None,
                         },
                     }
-                
+
                 # Other errors
                 return {
                     "valid": False,
@@ -385,7 +390,7 @@ class GigaChatProvider(BaseProvider):
                         "code": None,
                     },
                 }
-                
+
             except httpx.TimeoutException:
                 raise
             except Exception as e:

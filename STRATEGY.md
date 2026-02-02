@@ -8,6 +8,39 @@ Structure the document with the following sections:
 
 ## Recent Updates
 
+### v0.9.1 (February 2, 2026) ✅
+
+**Goal:** Critical bugfix for GigaChat OAuth2 authentication
+
+**Implemented:**
+- ✅ Fixed incorrect Authorization header (Bearer → Basic) for OAuth2 endpoint
+- ✅ Updated `get_access_token()` and `validate_api_key()` methods
+- ✅ Enhanced documentation with Key Format section
+- ✅ 100% backward compatible (internal OAuth2 logic only)
+
+**Quality:**
+- Type checking (mypy): 0 errors
+- Linting (ruff): 0 warnings
+- Tests: 49 passed, 0 failed
+- Documentation: Updated gigachat.md with OAuth2 flow
+
+**Use Case:** Critical production bugfix for all GigaChat users
+
+**Development Timeline:**
+- February 2: Issue #10 reported by Platform SaaS Team
+- February 2: Analysis, implementation, testing completed (same day)
+- February 2: Released v0.9.1 (same day delivery)
+
+**Status:** ✅ Completed and Production-Ready (February 2, 2026)
+
+**Key Achievements:**
+- Same-day critical bugfix delivery
+- Zero breaking changes (100% backward compatibility)
+- Complete documentation update
+- Related: [Issue #10](https://github.com/MikhailMalorod/Multi-LLM-Orchestrator/issues/10)
+
+**Target Audience:** All GigaChat users (production-critical fix)
+
 ### v0.9.0 (January 18, 2026) ✅ COMPLETED
 
 **Status**: ✅ Released - Production Ready
